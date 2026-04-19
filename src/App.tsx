@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { Sparkles, TrendingUp, Download, Play, CheckCircle, Settings } from 'lucide-react';
-import { processTranscript, CutResult, AIProvider } from './services/ai';
+import { processTranscript, type CutResult, type AIProvider } from './services/ai';
 import './index.css';
 
 function App() {

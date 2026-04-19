@@ -1,0 +1,50 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+model Project {
+  id          String       @id @default(uuid())
+  name        String
+  niche       String?      
+  preset      String       
+  createdAt   DateTime     @default(now())
+  updatedAt   DateTime     @updatedAt
+  transcripts Transcript[]
+}
+
+model Transcript {
+  id           String   @id @default(uuid())
+  projectId    String
+  originalText String
+  status       String   @default("COMPLETED") // PENDING, PROCESSING, COMPLETED, ERROR
+  createdAt    DateTime @default(now())
+  
+  project      Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  cuts         Cut[]
+}
+
+model Cut {
+  id                  String   @id @default(uuid())
+  transcriptId        String
+  text                String
+  
+  // Metadados
+  title               String
+  category            String
+  justification       String
+  
+  // Scores
+  totalScore          Float
+  hookScore           Float
+  retentionScore      Float
+  emotionScore        Float
+  
+  createdAt           DateTime @default(now())
+
+  transcript          Transcript @relation(fields: [transcriptId], references: [id], onDelete: Cascade)
+}
