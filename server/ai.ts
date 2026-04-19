@@ -11,8 +11,9 @@ export interface CutResult {
   justification: string;
 }
 
-const SYSTEM_PROMPT = `Você é o motor de análise do Viral Transcript Engine. 
-Sua tarefa é encontrar trechos de 9 a 17 segundos (aprox. 25 a 45 palavras faladas) dentro do texto fornecido que se sustentem sozinhos (Standalone).
+const getSystemPrompt = (niche: string, preset: string) => `Você é o motor de análise do Viral Transcript Engine especializado no nicho de '${niche}'. 
+Sua estratégia de extração hoje é: '${preset}'.
+Sua tarefa é encontrar trechos de 9 a 17 segundos (aprox. 25 a 45 palavras faladas) dentro do texto fornecido que se sustentem sozinhos (Standalone) e sigam a estratégia solicitada.
 
 REGRAS RÍGIDAS:
 1. Extraia de 1 a 3 cortes com maior potencial viral.
@@ -39,16 +40,20 @@ Exemplo do formato esperado:
 export async function processTranscriptAI(
   text: string,
   provider: AIProvider,
-  apiKey: string
+  apiKey: string,
+  niche: string = "Geral",
+  preset: string = "Viral"
 ): Promise<CutResult[]> {
+  const systemPrompt = getSystemPrompt(niche, preset);
+
   if (provider === 'openai') {
-    return callOpenAI(text, apiKey);
+    return callOpenAI(text, apiKey, systemPrompt);
   } else {
-    return callOpenRouter(text, apiKey);
+    return callOpenRouter(text, apiKey, systemPrompt);
   }
 }
 
-async function callOpenAI(text: string, apiKey: string): Promise<CutResult[]> {
+async function callOpenAI(text: string, apiKey: string, systemPrompt: string): Promise<CutResult[]> {
   const response = await fetch('https://api.openai.com/v1/chat/completions', {
     method: 'POST',
     headers: {
@@ -58,7 +63,7 @@ async function callOpenAI(text: string, apiKey: string): Promise<CutResult[]> {
     body: JSON.stringify({
       model: 'gpt-4o-mini',
       messages: [
-        { role: 'system', content: SYSTEM_PROMPT },
+        { role: 'system', content: systemPrompt },
         { role: 'user', content: text }
       ],
       temperature: 0.7,
@@ -74,7 +79,7 @@ async function callOpenAI(text: string, apiKey: string): Promise<CutResult[]> {
   return parseResponse(data.choices[0].message.content);
 }
 
-async function callOpenRouter(text: string, apiKey: string): Promise<CutResult[]> {
+async function callOpenRouter(text: string, apiKey: string, systemPrompt: string): Promise<CutResult[]> {
   const response = await fetch('https://openrouter.ai/api/v1/chat/completions', {
     method: 'POST',
     headers: {
@@ -86,7 +91,7 @@ async function callOpenRouter(text: string, apiKey: string): Promise<CutResult[]
     body: JSON.stringify({
       model: 'anthropic/claude-3.5-sonnet',
       messages: [
-        { role: 'system', content: SYSTEM_PROMPT },
+        { role: 'system', content: systemPrompt },
         { role: 'user', content: text }
       ],
       temperature: 0.7,

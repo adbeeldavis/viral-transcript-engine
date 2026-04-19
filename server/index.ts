@@ -36,7 +36,7 @@ app.get('/api/projects', async (req, res) => {
 // Endpoint Assíncrono: Inicia o processamento e retorna o ID do Transcript
 app.post('/api/transcripts/process', async (req, res) => {
   try {
-    const { originalText, provider, apiKey, projectId: reqProjectId } = req.body;
+    const { originalText, provider, apiKey, projectId: reqProjectId, niche, preset } = req.body;
     
     // Se não enviou projectId, cria um Projeto Padrão
     let projectId = reqProjectId;
@@ -64,7 +64,7 @@ app.post('/api/transcripts/process', async (req, res) => {
     setImmediate(async () => {
       try {
         console.log(`[Worker] Processando transcript ${transcript.id}...`);
-        const cuts = await processTranscriptAI(originalText, provider as AIProvider, apiKey);
+        const cuts = await processTranscriptAI(originalText, provider as AIProvider, apiKey, niche, preset);
         
         await prisma.transcript.update({
           where: { id: transcript.id },

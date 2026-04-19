@@ -39,6 +39,7 @@ function App() {
   // Player State
   const [isPlaying, setIsPlaying] = useState(false);
   const [activeWordIndex, setActiveWordIndex] = useState(-1);
+  const [isDragging, setIsDragging] = useState(false);
 
   const handleProcess = async () => {
     if (!transcript.trim()) {
@@ -58,7 +59,7 @@ function App() {
       const resStart = await fetch('http://localhost:3001/api/transcripts/process', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ originalText: transcript, provider, apiKey })
+        body: JSON.stringify({ originalText: transcript, provider, apiKey, niche, preset })
       });
 
       if (!resStart.ok) throw new Error("Erro ao iniciar o processamento na API.");
@@ -203,13 +204,45 @@ function App() {
                 <p style={{ color: 'var(--text-muted)', fontSize: '1.1rem' }}>Cole seu texto bruto e nossa IA extrairá os momentos de maior retenção.</p>
               </div>
               
-              <div className="input-group" style={{ marginBottom: '2rem' }}>
+              <div 
+                onDragOver={(e) => { e.preventDefault(); setIsDragging(true); }}
+                onDragLeave={() => setIsDragging(false)}
+                onDrop={(e) => {
+                  e.preventDefault();
+                  setIsDragging(false);
+                  if (e.dataTransfer.files && e.dataTransfer.files.length > 0) {
+                    const file = e.dataTransfer.files[0];
+                    const reader = new FileReader();
+                    reader.onload = (event) => {
+                      if (event.target?.result) {
+                        setTranscript(event.target.result as string);
+                      }
+                    };
+                    reader.readAsText(file);
+                  }
+                }}
+                style={{ 
+                  border: isDragging ? '2px dashed var(--primary)' : '2px dashed var(--border-light)',
+                  background: isDragging ? 'rgba(157, 78, 221, 0.05)' : 'var(--bg-input)',
+                  borderRadius: '1rem', padding: '1.5rem', textAlign: 'center', marginBottom: '2rem', transition: 'all 0.3s ease'
+                }}
+              >
+                <div style={{ marginBottom: '1rem', color: 'var(--text-muted)', fontSize: '0.95rem' }}>
+                  Arraste e solte um arquivo .txt, .srt, .md ou .vtt aqui <br/> ou cole o texto diretamente abaixo:
+                </div>
                 <textarea 
-                  rows={10} 
-                  placeholder="Cole o transcript do vídeo, aula, podcast ou reunião..."
+                  rows={8} 
+                  placeholder="Cole o transcript bruto aqui..."
                   value={transcript}
                   onChange={(e) => setTranscript(e.target.value)}
-                  style={{ resize: 'vertical', fontSize: '1.1rem', padding: '1.5rem' }}
+                  style={{ 
+                    width: '100%', resize: 'vertical', fontSize: '1.05rem', padding: '1.25rem', 
+                    background: 'rgba(0,0,0,0.3)', border: '1px solid var(--border-light)', 
+                    color: '#fff', borderRadius: '0.75rem', outline: 'none',
+                    boxShadow: 'inset 0 2px 4px rgba(0,0,0,0.3)'
+                  }}
+                  onFocus={(e) => e.target.style.borderColor = 'var(--primary)'}
+                  onBlur={(e) => e.target.style.borderColor = 'var(--border-light)'}
                 ></textarea>
               </div>
 
