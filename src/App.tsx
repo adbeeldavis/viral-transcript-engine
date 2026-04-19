@@ -1,8 +1,22 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { Sparkles, TrendingUp, Download, Play, CheckCircle, Settings } from 'lucide-react';
-import { processTranscript, type CutResult, type AIProvider } from './services/ai';
+import { Sparkles, TrendingUp, Download, Play, CheckCircle, Settings, Loader } from 'lucide-react';
 import './index.css';
+
+export type AIProvider = 'openai' | 'openrouter';
+
+export interface CutResult {
+  id: string;
+  title: string;
+  score?: number;
+  totalScore?: number;
+  category: string;
+  text: string;
+  hookScore: number;
+  retentionScore: number;
+  emotionScore: number;
+  justification: string;
+}
 
 function App() {
   const [step, setStep] = useState<'upload' | 'processing' | 'results'>('upload');
@@ -22,6 +36,10 @@ function App() {
   const [activeCut, setActiveCut] = useState<CutResult | null>(null);
   const [error, setError] = useState<string | null>(null);
 
+  // Player State
+  const [isPlaying, setIsPlaying] = useState(false);
+  const [activeWordIndex, setActiveWordIndex] = useState(-1);
+
   const handleProcess = async () => {
     if (!transcript.trim()) {
       setError('Por favor, insira o texto do transcript.');
@@ -37,18 +55,83 @@ function App() {
     setStep('processing');
 
     try {
-      const generatedCuts = await processTranscript(transcript, provider, apiKey);
-      if (generatedCuts.length === 0) {
-        throw new Error("Nenhum corte foi gerado pela IA.");
-      }
-      setCuts(generatedCuts);
-      setActiveCut(generatedCuts[0]);
-      setStep('results');
+      // 1. Inicia o Job Assíncrono no Backend
+      const resStart = await fetch('http://localhost:3001/api/transcripts/process', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ originalText: transcript, provider, apiKey })
+      });
+
+      if (!resStart.ok) throw new Error("Erro ao iniciar o processamento na API.");
+      
+      const { transcriptId } = await resStart.json();
+
+      // 2. Polling para checar o status
+      const checkStatus = async () => {
+        const resCheck = await fetch(`http://localhost:3001/api/transcripts/${transcriptId}`);
+        const data = await resCheck.json();
+
+        if (data.status === 'COMPLETED') {
+          if (data.cuts.length === 0) {
+            setError("A IA não retornou nenhum corte válido.");
+            setStep('upload');
+            return;
+          }
+          setCuts(data.cuts);
+          setActiveCut(data.cuts[0]);
+          setStep('results');
+        } else if (data.status === 'ERROR') {
+          setError("Ocorreu um erro no processamento em background (IA).");
+          setStep('upload');
+        } else {
+          // Continua o Polling após 2 segundos
+          setTimeout(checkStatus, 2000);
+        }
+      };
+
+      setTimeout(checkStatus, 2000);
+
     } catch (err: any) {
       setError(err.message || 'Erro inesperado ao processar.');
       setStep('upload');
     }
   };
+
+  const exportJSON = () => {
+    if (!activeCut) return;
+    const dataStr = "data:text/json;charset=utf-8," + encodeURIComponent(JSON.stringify(activeCut, null, 2));
+    const downloadAnchorNode = document.createElement('a');
+    downloadAnchorNode.setAttribute("href",     dataStr);
+    downloadAnchorNode.setAttribute("download", `corte_${activeCut.id || 'export'}.json`);
+    document.body.appendChild(downloadAnchorNode);
+    downloadAnchorNode.click();
+    downloadAnchorNode.remove();
+  };
+
+  const handlePlaySimulation = () => {
+    if (!activeCut) return;
+    setIsPlaying(true);
+    setActiveWordIndex(0);
+  };
+
+  // Simulação de renderização Chunk-by-Chunk
+  useEffect(() => {
+    if (isPlaying && activeCut) {
+      const words = activeCut.text.split(' ');
+      if (activeWordIndex < words.length - 1) {
+        const timer = setTimeout(() => {
+          setActiveWordIndex(prev => prev + 1);
+        }, 300); // Avança uma palavra a cada 300ms
+        return () => clearTimeout(timer);
+      } else {
+        const timer = setTimeout(() => {
+          setIsPlaying(false);
+          setActiveWordIndex(-1);
+        }, 1000);
+        return () => clearTimeout(timer);
+      }
+    }
+  }, [isPlaying, activeWordIndex, activeCut]);
 
   return (
     <div className="app-container">
@@ -62,7 +145,7 @@ function App() {
             <Settings size={18} /> Configurações de IA
           </button>
           {step === 'results' && (
-            <button className="btn" onClick={() => { setStep('upload'); setCuts([]); }}>
+            <button className="btn" onClick={() => { setStep('upload'); setCuts([]); setActiveCut(null); }}>
               Novo Processamento
             </button>
           )}
@@ -97,7 +180,7 @@ function App() {
               </div>
             </div>
             <p style={{ fontSize: '0.8rem', color: 'var(--text-muted)', marginTop: '1rem' }}>
-              * Suas chaves de API não são armazenadas em nenhum banco de dados, elas residem apenas na memória do seu navegador.
+              * A chave é repassada com segurança ao backend local, sem persistência no banco.
             </p>
           </motion.div>
         )}
@@ -153,7 +236,7 @@ function App() {
 
               <div style={{ marginTop: '2rem', textAlign: 'center' }}>
                 <button className="btn" onClick={handleProcess} style={{ padding: '1rem 3rem', fontSize: '1.1rem' }}>
-                  Analisar com {provider === 'openai' ? 'OpenAI' : 'OpenRouter'} <TrendingUp size={20} />
+                  Analisar e Salvar no BD <TrendingUp size={20} />
                 </button>
               </div>
             </motion.div>
@@ -173,11 +256,11 @@ function App() {
                 transition={{ repeat: Infinity, duration: 2, ease: "linear" }}
                 style={{ display: 'inline-block', marginBottom: '2rem' }}
               >
-                <Sparkles size={64} color="var(--primary)" />
+                <Loader size={64} color="var(--primary)" />
               </motion.div>
-              <h3>Motor de IA Trabalhando...</h3>
+              <h3>Processamento Assíncrono...</h3>
               <p style={{ color: 'var(--text-muted)', marginTop: '1rem' }}>
-                Enviando para {provider === 'openai' ? 'OpenAI' : 'OpenRouter'} e calculando o score de viralização. Aguarde...
+                O backend salvou o projeto no SQLite e a IA (Worker) está segmentando o texto em background. A UI não está travada!
               </p>
             </motion.div>
           )}
@@ -193,8 +276,8 @@ function App() {
               <div className="glass-panel" style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                   <h3>Cortes Sugeridos ({cuts.length})</h3>
-                  <button className="btn btn-secondary" style={{ padding: '0.5rem' }}>
-                    <Download size={18} /> Exportar
+                  <button className="btn btn-secondary" style={{ padding: '0.5rem' }} onClick={exportJSON}>
+                    <Download size={18} /> Exportar JSON
                   </button>
                 </div>
                 
@@ -203,11 +286,11 @@ function App() {
                     <div 
                       key={cut.id} 
                       className={`cut-card ${activeCut.id === cut.id ? 'active' : ''}`}
-                      onClick={() => setActiveCut(cut)}
+                      onClick={() => { setActiveCut(cut); setIsPlaying(false); setActiveWordIndex(-1); }}
                     >
                       <div className="cut-header">
                         <span className="cut-title">{cut.title}</span>
-                        <span className="score-badge">🔥 {cut.score || Math.round((cut.hookScore + cut.retentionScore + cut.emotionScore) / 3)}</span>
+                        <span className="score-badge">🔥 {cut.totalScore || cut.score}</span>
                       </div>
                       <p className="cut-text">{cut.text}</p>
                       <div className="tags">
@@ -221,10 +304,38 @@ function App() {
 
               {/* Direita: Editor e Detalhes */}
               <div className="glass-panel editor-panel">
-                <div className="video-preview">
-                  <Play size={48} color="rgba(255,255,255,0.5)" />
-                  <div style={{ position: 'absolute', bottom: '2rem', width: '80%', textAlign: 'center', fontSize: '1.2rem', fontWeight: 'bold', textShadow: '0 2px 4px rgba(0,0,0,0.8)' }}>
-                    <span className="highlight-word">{activeCut.text.split(' ').slice(0, 3).join(' ')}</span> {activeCut.text.split(' ').slice(3, 7).join(' ')}...
+                <div className="video-preview" style={{ cursor: isPlaying ? 'default' : 'pointer' }} onClick={!isPlaying ? handlePlaySimulation : undefined}>
+                  {!isPlaying && (
+                    <motion.div whileHover={{ scale: 1.1 }}>
+                      <Play size={48} color="rgba(255,255,255,0.7)" />
+                    </motion.div>
+                  )}
+                  <div style={{ 
+                    position: 'absolute', bottom: '2rem', width: '85%', textAlign: 'center', 
+                    fontSize: '1.4rem', fontWeight: '900', textShadow: '0 3px 6px rgba(0,0,0,0.9)',
+                    fontFamily: 'sans-serif', lineHeight: '1.2'
+                  }}>
+                    {isPlaying ? (
+                      activeCut.text.split(' ').map((word, i) => (
+                        <motion.span 
+                          key={i}
+                          initial={{ opacity: 0.3, scale: 0.9 }}
+                          animate={{ 
+                            opacity: i <= activeWordIndex ? 1 : 0.3,
+                            color: i === activeWordIndex ? 'var(--primary)' : '#fff',
+                            scale: i === activeWordIndex ? 1.1 : 1
+                          }}
+                          style={{ display: 'inline-block', marginRight: '0.3rem', transition: 'color 0.1s ease' }}
+                        >
+                          {word}
+                        </motion.span>
+                      ))
+                    ) : (
+                      <>
+                        <span className="highlight-word">{activeCut.text.split(' ').slice(0, 3).join(' ')}</span> {activeCut.text.split(' ').slice(3, 7).join(' ')}...
+                        <br/><span style={{ fontSize: '0.8rem', opacity: 0.7, fontWeight: 'normal' }}>Clique para simular legenda</span>
+                      </>
+                    )}
                   </div>
                 </div>
 
@@ -256,14 +367,7 @@ function App() {
 
                 <div className="input-group">
                   <label>Texto do Corte (Editável)</label>
-                  <textarea rows={4} value={activeCut.text} onChange={(e) => setActiveCut({...activeCut, text: e.target.value})}></textarea>
-                </div>
-
-                <div style={{ display: 'flex', gap: '1rem', marginTop: 'auto' }}>
-                  <button className="btn btn-secondary" style={{ flex: 1 }}>Rejeitar</button>
-                  <button className="btn" style={{ flex: 2, background: 'var(--accent-green)', color: '#000' }}>
-                    <CheckCircle size={18} /> Aprovar Corte
-                  </button>
+                  <textarea rows={3} value={activeCut.text} onChange={(e) => setActiveCut({...activeCut, text: e.target.value})}></textarea>
                 </div>
               </div>
             </motion.div>
