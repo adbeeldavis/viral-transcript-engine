@@ -226,50 +226,80 @@ function apiPlugin() {
   };
 }
 
-// ─── Prompt Agressivo e Narrativo ─────────────────────────────────────────────
+// ─── Prompt Viral Elite Engine ─────────────────────────────────────────────────
 function buildAggressivePrompt(niche: string, preset: string): string {
-  return `Você é o VIRAL STORY ENGINE — o motor de análise narrativa mais agressivo e persuasivo do mundo para o nicho '${niche}'.
+  return `Você é o VIRAL ELITE ENGINE — motor de análise de curto-forma especializado no nicho '${niche}' com estratégia '${preset}'.
 
-MISSÃO: Extrair EXATAMENTE 10 cortes de 9 a 17 segundos (25–45 palavras cada) do transcript abaixo, transformando o conteúdo em uma NARRATIVA IRRESISTÍVEL que prende, emociona e vicia.
+FILOSOFIA: Todo corte deve vencer 4 etapas: parar o scroll → segurar atenção → recompensar rápido → deixar resíduo emocional ou intelectual. Não aprove cortes curtos e vazios. Prefira 10–17 segundos com impacto real a 6 segundos sem sentido.
 
-ESTRATÉGIA ATIVA: ${preset}
+HIERARQUIA DE DECISÃO:
+1. Clareza instantânea (funciona sem contexto e sem áudio)
+2. Hook nos primeiros 1–3s (tese forte, pergunta incômoda, contraintuitivo, confissão, choque leve)
+3. Carga emocional perceptível
+4. Curiosidade ou tensão sustentada
+5. Payoff rápido e recompensador
+6. Gatilho de reação social (comentar, compartilhar, salvar, replay)
 
-═══════════════════════════════
-CRITÉRIOS OBRIGATÓRIOS DOS 10 CORTES:
-═══════════════════════════════
-1. GANCHO DEVASTADOR nos primeiros 3 segundos: use medo, curiosidade extrema, afirmação contraintuitiva, pergunta que sangra, ou revelação inesperada.
-2. ARCO NARRATIVO: cada corte deve ter começo (tensão), meio (conflito) e fim (resolução ou cliffhanger).
-3. LINGUAGEM ORAL NATURAL: preserve a voz original. Nunca reescreva — apenas extraia.
-4. NUNCA comece com: "então", "pois é", "bom", "né", "tipo", cumprimentos, ou transições.
-5. DIVERSIFIQUE os tipos: inclua pelo menos 2 de cada categoria: Revelação, Dor/Solução, Opinião Polêmica, Storytelling Emocional, Autoridade/Prova.
-6. SCORE AGRESSIVO: seja generoso nos scores — o sistema valoriza cortes de alto impacto acima de 80.
-7. JUSTIFICATIVA NARRATIVA: explique qual gatilho psicológico o corte ativa (curiosidade, medo, pertencimento, urgência, etc).
+EMOÇÕES PRIMÁRIAS A DETECTAR: surpresa, medo, raiva, tristeza, alegria, antecipação, confiança, nojo
+EMOÇÕES COMPOSTAS DE ALTO VALOR: esperança+caminho, dor+identificação, vulnerabilidade+superação, indignação+argumento, ambição+prova, surpresa+utilidade
 
-═══════════════════════════════
-CONFIGURAÇÃO DE ANÁLISE PERSUASIVA:
-═══════════════════════════════
-- Priorize quebras de crença, confissões, erros confessados, momentos de virada, segredos revelados.
-- Detecte energia emocional: risos, silêncios, hesitação, indignação, empolgação.
-- Identifique frases com "eu nunca contei isso", "o maior erro foi", "foi quando tudo mudou", "ninguém fala disso", "a verdade é que".
-- Transforme qualquer informação técnica em emoção e consequência humana.
+GATILHOS MENTAIS A PONTUAR: curiosidade, contraste, quebra de padrão, prova social, autoridade, especificidade, urgência, pertencimento, insight contraintuitivo, reframe, validação emocional, benefício concreto, risco/perda
 
-RETORNE EXATAMENTE um array JSON com 10 objetos, sem markdown, sem texto fora do array:
+ESTRUTURAS DE ALTO VALOR (priorize trechos com):
+- erro + consequência | mito + correção | dor + solução | tese + prova | opinião forte + justificativa
+- mini-história + aprendizado | vulnerabilidade + virada | pergunta provocativa + resposta curta
+- confissão | segredo revelado | "ninguém fala isso" | "foi aqui que tudo mudou"
+
+DESCARTE automático se: depende de contexto anterior, burocrático, sem emoção, sem frase memorável, abertura lenta, payoff fraco, final mole.
+
+SCORE AVANÇADO (0–100 cada):
+- hookScore: força do gancho nos primeiros 3s
+- retentionScore: capacidade de segurar atenção até o fim
+- emotionScore: intensidade emocional perceptível
+- clarityScore: funciona sem contexto e sem áudio
+- shareScore: potencial de compartilhamento/salvamento
+- closingScore: força da frase final
+- score: média ponderada (hook x2 + retention + emotion + clarity + share + closing) / 7
+
+ADAPTAÇÃO POR PLATAFORMA:
+- TikTok: mais energia, pattern interrupt, tese forte, verdade incômoda, sensação de descoberta
+- Instagram Reels: mais refinamento, frase compartilhável, valor claro, menos caos
+- YouTube Shorts: abrir forte, legível sem áudio, payoff rápido, favorece loop
+- X/Twitter: funciona como tese, frase quotéavel, ponto de vista que gera resposta
+
+RETORNE EXATAMENTE um array JSON com até 10 objetos. Sem markdown. Sem texto fora do array:
 [
   {
-    "title": "Título chamativo e polêmico (máx 8 palavras)",
+    "title": "Título chamativo e polarizador (máx 8 palavras)",
+    "headline": "Frase de capa curta para thumbnail",
     "score": 94,
-    "category": "Revelação / Storytelling / Opinião Polêmica / Dor-Solução / Autoridade",
+    "category": "Revelação | Storytelling | Opinião Polêmica | Dor-Solução | Autoridade | Verdade Incômoda",
+    "cutTypes": ["polêmico", "educativo"],
     "text": "Texto exato extraído do transcript, palavra por palavra, sem alterar nada...",
     "hookScore": 96,
     "retentionScore": 91,
     "emotionScore": 89,
-    "justification": "Gatilho ativado: [nome do gatilho]. Motivo: explicação em 1 frase impactante.",
-    "narrativeArc": "Tensão → Conflito → Resolução/Cliffhanger em 1 linha",
-    "platform": "TikTok" 
+    "clarityScore": 88,
+    "shareScore": 85,
+    "closingScore": 90,
+    "primaryEmotion": "surpresa",
+    "secondaryEmotion": "indignação",
+    "dominantTrigger": "quebra de padrão",
+    "justification": "Por quê foi escolhido, qual emoção aciona, qual reação social tende a gerar.",
+    "narrativeArc": "Tensão → Conflito → Resolução",
+    "editingNotes": "Punch-in na frase X. Pausa dramática após Y. Destaque a palavra Z.",
+    "captionShort": "Legenda curta que funciona no mudo",
+    "captionCTA": "Legenda com chamada para ação",
+    "tiktokVersion": "Versão adaptada para TikTok (igual ou com ajuste de hook)",
+    "reelsVersion": "Versão refinada para Instagram Reels",
+    "shortsVersion": "Versão loop-friendly para YouTube Shorts",
+    "xVersion": "Frase quotéavel curta para X/Twitter",
+    "risk": "Baixo",
+    "platform": "TikTok"
   }
 ]
 
-IMPORTANTE: Se o transcript tiver menos de 10 trechos fortes, gere os melhores disponíveis (mínimo 3). Nunca invente conteúdo — use apenas o que está no texto.`;
+REGRA FINAL: Descarte qualquer corte que não faça pelo menos 4 destas 6 coisas: (1) parar scroll, (2) despertar emoção, (3) criar curiosidade/tensão, (4) entregar payoff, (5) gerar vontade de reagir, (6) deixar frase memorável. Nunca invente — use apenas o que está no transcript.`;
 }
 
 // ─── Trunca o transcript para evitar limites de TPM ─────────────────────────
@@ -315,7 +345,7 @@ async function callAI(text: string, provider: string, apiKey: string, systemProm
         { role: 'user', content: `Analise este transcript e extraia os 10 melhores cortes virais:\n\n${safeText}` }
       ],
       temperature: 0.75,
-      max_tokens: 2800,
+      max_tokens: 3500,
     })
   });
 

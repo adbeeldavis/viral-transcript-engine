@@ -12,15 +12,37 @@ export type AIProvider = 'openai' | 'openrouter';
 export interface CutResult {
   id: string;
   title: string;
+  headline?: string;
   score?: number;
   totalScore?: number;
   category: string;
+  cutTypes?: string[];
   text: string;
+  // Scores básicos
   hookScore: number;
   retentionScore: number;
   emotionScore: number;
+  // Scores avançados
+  clarityScore?: number;
+  shareScore?: number;
+  closingScore?: number;
+  // Emoções e gatilhos
+  primaryEmotion?: string;
+  secondaryEmotion?: string;
+  dominantTrigger?: string;
+  // Conteúdo
   justification: string;
   narrativeArc?: string;
+  editingNotes?: string;
+  captionShort?: string;
+  captionCTA?: string;
+  // Versões por plataforma
+  tiktokVersion?: string;
+  reelsVersion?: string;
+  shortsVersion?: string;
+  xVersion?: string;
+  // Metadados
+  risk?: string;
   platform?: string;
   startSec: number;
   endSec: number;
@@ -70,6 +92,7 @@ export default function App() {
   const [copied, setCopied] = useState(false);
   const [history, setHistory] = useState<any[]>([]);
   const [keySaved, setKeySaved] = useState(false);
+  const [activeTab, setActiveTab] = useState<'analysis'|'platforms'|'editing'>('analysis');
 
   const STEPS = ['Ingerindo transcript...','Limpando e normalizando texto...','Segmentando blocos narrativos...','Detectando gatilhos emocionais...','Calculando Score Viral...','Estimando timestamps...','Montando 10 cortes finais...'];
 
@@ -413,57 +436,117 @@ export default function App() {
                       </div>
                     </div>
                   </div>
+                  {activeCut.headline&&<p className="headline-badge">🎯 {activeCut.headline}</p>}
                 </div>
 
-                {/* Scores */}
-                <div className="glass-panel scores-panel">
-                  <h3 className="panel-title">Score de Viralização</h3>
-                  <div className="score-circle-wrap">
-                    <div className="score-circle" style={{'--pct':getScore(activeCut)} as any}>
-                      <span className="score-number">{getScore(activeCut)}</span>
-                      <span className="score-label">/ 100</span>
-                    </div>
-                  </div>
-                  <div className="score-bars">
-                    {[
-                      {label:'Abertura (Hook)',val:activeCut.hookScore,color:'var(--secondary)'},
-                      {label:'Retenção',val:activeCut.retentionScore,color:'var(--accent-green)'},
-                      {label:'Intensidade Emocional',val:activeCut.emotionScore,color:'var(--accent-orange)'},
-                    ].map(({label,val,color})=>(
-                      <div key={label} className="score-bar-item">
-                        <div className="score-bar-label"><span>{label}</span><span>{val}</span></div>
-                        <div className="score-bar-track">
-                          <motion.div className="score-bar-fill" initial={{width:0}} animate={{width:`${val}%`}} transition={{duration:0.9,ease:'easeOut'}} style={{background:color}}/>
-                        </div>
-                      </div>
+                {/* Tabs de Análise */}
+                <div className="glass-panel tabs-panel">
+                  <div className="tab-bar">
+                    {(['analysis','platforms','editing'] as const).map(tab=>(
+                      <button key={tab} className={`tab-btn ${activeTab===tab?'active':''}`} onClick={()=>setActiveTab(tab)}>
+                        {tab==='analysis'?'📊 Análise':tab==='platforms'?'📱 Plataformas':'✂️ Edição'}
+                      </button>
                     ))}
                   </div>
-                </div>
 
-                {/* Análise narrativa */}
-                <div className="glass-panel justification-panel">
-                  <h3 className="panel-title">Análise Cognitiva & Narrativa</h3>
-                  <p className="justification-text">{activeCut.justification}</p>
-                  {activeCut.narrativeArc&&(
-                    <div className="narrative-arc">
-                      <span className="arc-label">Arco:</span> {activeCut.narrativeArc}
-                    </div>
-                  )}
-                </div>
+                  <AnimatePresence mode="wait">
+                    {/* Tab: Análise */}
+                    {activeTab==='analysis'&&(
+                      <motion.div key="analysis" initial={{opacity:0,x:10}} animate={{opacity:1,x:0}} exit={{opacity:0,x:-10}} className="tab-content">
+                        {/* Score circle + bars */}
+                        <div className="score-circle-wrap">
+                          <div className="score-circle" style={{'--pct':getScore(activeCut)} as any}>
+                            <span className="score-number">{getScore(activeCut)}</span>
+                            <span className="score-label">/ 100</span>
+                          </div>
+                        </div>
+                        <div className="score-bars">
+                          {[
+                            {label:'Hook',val:activeCut.hookScore,color:'var(--primary)'},
+                            {label:'Retenção',val:activeCut.retentionScore,color:'var(--accent-green)'},
+                            {label:'Emoção',val:activeCut.emotionScore,color:'var(--accent-orange)'},
+                            ...(activeCut.clarityScore?[{label:'Clareza',val:activeCut.clarityScore,color:'var(--secondary)'}]:[]),
+                            ...(activeCut.shareScore?[{label:'Compartilhamento',val:activeCut.shareScore,color:'#a78bfa'}]:[]),
+                            ...(activeCut.closingScore?[{label:'Fecho (Punch)',val:activeCut.closingScore,color:'#f43f5e'}]:[]),
+                          ].map(({label,val,color})=>(
+                            <div key={label} className="score-bar-item">
+                              <div className="score-bar-label"><span>{label}</span><span>{val}</span></div>
+                              <div className="score-bar-track">
+                                <motion.div className="score-bar-fill" initial={{width:0}} animate={{width:`${val}%`}} transition={{duration:0.8,ease:'easeOut'}} style={{background:color}}/>
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                        {/* Emotion & trigger badges */}
+                        <div className="emotion-row">
+                          {activeCut.primaryEmotion&&<span className="emotion-badge primary">😮 {activeCut.primaryEmotion}</span>}
+                          {activeCut.secondaryEmotion&&<span className="emotion-badge secondary">💫 {activeCut.secondaryEmotion}</span>}
+                          {activeCut.dominantTrigger&&<span className="emotion-badge trigger">🎯 {activeCut.dominantTrigger}</span>}
+                        </div>
+                        {activeCut.risk&&<div className={`risk-badge risk-${activeCut.risk.toLowerCase().split(' ')[0]}`}>⚠️ Risco: {activeCut.risk}</div>}
+                        <p className="justification-text">{activeCut.justification}</p>
+                        {activeCut.narrativeArc&&<div className="narrative-arc"><span className="arc-label">Arco:</span> {activeCut.narrativeArc}</div>}
+                      </motion.div>
+                    )}
 
-                {/* Editor */}
-                <div className="glass-panel editor-panel">
-                  <div className="editor-header">
-                    <h3 className="panel-title">Texto do Corte</h3>
-                    <button className="icon-btn" onClick={()=>copyText(activeCut.text)}>
-                      {copied?<CheckCircle size={15} color="var(--accent-green)"/>:<Copy size={15}/>}
-                    </button>
-                  </div>
-                  <textarea className="editor-textarea" rows={4} value={activeCut.text} onChange={e=>setActiveCut({...activeCut,text:e.target.value})}/>
-                  <div className="editor-actions">
-                    <button className="btn btn-danger">Descartar</button>
-                    <button className="btn btn-success"><CheckCircle size={15}/> Aprovar Corte</button>
-                  </div>
+                    {/* Tab: Plataformas */}
+                    {activeTab==='platforms'&&(
+                      <motion.div key="platforms" initial={{opacity:0,x:10}} animate={{opacity:1,x:0}} exit={{opacity:0,x:-10}} className="tab-content">
+                        {[
+                          {icon:'🎵',label:'TikTok',val:activeCut.tiktokVersion},
+                          {icon:'📸',label:'Instagram Reels',val:activeCut.reelsVersion},
+                          {icon:'▶️',label:'YouTube Shorts',val:activeCut.shortsVersion},
+                          {icon:'𝕏',label:'X / Twitter',val:activeCut.xVersion},
+                        ].map(({icon,label,val})=>(
+                          <div key={label} className="platform-block">
+                            <div className="platform-block-header">
+                              <span>{icon} {label}</span>
+                              <button className="icon-btn" onClick={()=>copyText(val||activeCut.text)} title="Copiar">
+                                {copied?<CheckCircle size={13} color="var(--accent-green)"/>:<Copy size={13}/>}
+                              </button>
+                            </div>
+                            <p className="platform-text">{val||<em style={{color:'var(--text-muted)'}}>Mesmo texto do corte principal</em>}</p>
+                          </div>
+                        ))}
+                        <div className="platform-block">
+                          <div className="platform-block-header"><span>📝 Caption Curta (mudo)</span></div>
+                          <p className="platform-text">{activeCut.captionShort||'—'}</p>
+                        </div>
+                        <div className="platform-block">
+                          <div className="platform-block-header"><span>📣 Caption com CTA</span></div>
+                          <p className="platform-text">{activeCut.captionCTA||'—'}</p>
+                        </div>
+                      </motion.div>
+                    )}
+
+                    {/* Tab: Edição */}
+                    {activeTab==='editing'&&(
+                      <motion.div key="editing" initial={{opacity:0,x:10}} animate={{opacity:1,x:0}} exit={{opacity:0,x:-10}} className="tab-content">
+                        {activeCut.editingNotes&&(
+                          <div className="editing-notes">
+                            <h4>✂️ Instruções de Edição</h4>
+                            <p>{activeCut.editingNotes}</p>
+                          </div>
+                        )}
+                        {activeCut.cutTypes&&activeCut.cutTypes.length>0&&(
+                          <div className="cut-type-tags">
+                            {activeCut.cutTypes.map(t=><span key={t} className="cut-type-tag">{t}</span>)}
+                          </div>
+                        )}
+                        <div className="editor-header" style={{marginTop:'1rem'}}>
+                          <h3 className="panel-title">Texto do Corte</h3>
+                          <button className="icon-btn" onClick={()=>copyText(activeCut.text)}>
+                            {copied?<CheckCircle size={15} color="var(--accent-green)"/>:<Copy size={15}/>}
+                          </button>
+                        </div>
+                        <textarea className="editor-textarea" rows={4} value={activeCut.text} onChange={e=>setActiveCut({...activeCut,text:e.target.value})}/>
+                        <div className="editor-actions">
+                          <button className="btn btn-danger">Descartar</button>
+                          <button className="btn btn-success"><CheckCircle size={15}/> Aprovar Corte</button>
+                        </div>
+                      </motion.div>
+                    )}
+                  </AnimatePresence>
                 </div>
               </div>
             </motion.div>
