@@ -69,6 +69,7 @@ export default function App() {
   const [processingStep, setProcessingStep] = useState(0);
   const [copied, setCopied] = useState(false);
   const [history, setHistory] = useState<any[]>([]);
+  const [keySaved, setKeySaved] = useState(false);
 
   const STEPS = ['Ingerindo transcript...','Limpando e normalizando texto...','Segmentando blocos narrativos...','Detectando gatilhos emocionais...','Calculando Score Viral...','Estimando timestamps...','Montando 10 cortes finais...'];
 
@@ -109,7 +110,14 @@ export default function App() {
 
   const handleApiKeyChange = (val: string) => {
     setApiKey(val);
-    if (val.length > 10) saveApiKey(val, provider);
+    setKeySaved(false); // reseta indicador ao editar
+  };
+
+  const handleSaveKey = async () => {
+    if (!apiKey.trim()) return;
+    await saveApiKey(apiKey, provider);
+    setKeySaved(true);
+    setTimeout(() => setKeySaved(false), 3000);
   };
 
   // Legenda chunk-by-chunk
@@ -212,18 +220,23 @@ export default function App() {
             </div>
             <div className="settings-grid">
               <div className="input-group">
-                <label>Provedor</label>
+                <label>Provedor de IA</label>
                 <div className="provider-toggle">
-                  <button className={`toggle-btn ${provider==='openai'?'active':''}`} onClick={()=>setProvider('openai')}>OpenAI GPT-4o</button>
+                  <button className={`toggle-btn ${provider==='openai'?'active':''}`} onClick={()=>setProvider('openai')}>OpenAI GPT-4o-mini</button>
                   <button className={`toggle-btn ${provider==='openrouter'?'active':''}`} onClick={()=>setProvider('openrouter')}>OpenRouter Claude</button>
                 </div>
               </div>
               <div className="input-group">
-                <label>API Key — salva automaticamente</label>
-                <input type="password" placeholder={provider==='openai'?'sk-proj-...':'sk-or-v1-...'} value={apiKey} onChange={e=>handleApiKeyChange(e.target.value)}/>
+                <label>API Key</label>
+                <div className="apikey-row">
+                  <input type="password" placeholder={provider==='openai'?'sk-proj-...':'sk-or-v1-...'} value={apiKey} onChange={e=>handleApiKeyChange(e.target.value)}/>
+                  <button className={`btn save-key-btn ${keySaved?'saved':''}`} onClick={handleSaveKey}>
+                    {keySaved ? <><CheckCircle size={15}/> Salva!</> : <><CheckCircle size={15}/> Salvar</>}
+                  </button>
+                </div>
               </div>
             </div>
-            <p className="settings-note">🔒 Chave salva localmente (localStorage + arquivo) · não enviamos seus dados a terceiros.</p>
+            <p className="settings-note">🔒 Chave salva no localStorage e no arquivo .db/database.json · não enviamos seus dados a terceiros.</p>
           </motion.div>
         )}
 

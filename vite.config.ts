@@ -272,13 +272,22 @@ RETORNE EXATAMENTE um array JSON com 10 objetos, sem markdown, sem texto fora do
 IMPORTANTE: Se o transcript tiver menos de 10 trechos fortes, gere os melhores disponíveis (mínimo 3). Nunca invente conteúdo — use apenas o que está no texto.`;
 }
 
+// ─── Trunca o transcript para evitar limites de TPM ─────────────────────────
+function truncateTranscript(text: string, maxWords = 3500): string {
+  const words = text.split(/\s+/);
+  if (words.length <= maxWords) return text;
+  console.log(`[Worker] Transcript truncado de ${words.length} para ${maxWords} palavras (limite de tokens).`);
+  return words.slice(0, maxWords).join(' ') + '\n[... transcript truncado para análise ...]';
+}
+
 // ─── Chamada para a API de IA ─────────────────────────────────────────────────
 async function callAI(text: string, provider: string, apiKey: string, systemPrompt: string): Promise<any[]> {
   const url = provider === 'openai'
     ? 'https://api.openai.com/v1/chat/completions'
     : 'https://openrouter.ai/api/v1/chat/completions';
 
-  const model = provider === 'openai' ? 'gpt-4o' : 'anthropic/claude-3.5-sonnet';
+  // gpt-4o-mini: limite 200k TPM (muito mais folgado que gpt-4o com 30k TPM)
+  const model = provider === 'openai' ? 'gpt-4o-mini' : 'anthropic/claude-3.5-sonnet';
 
   const headers: Record<string, string> = {
     'Content-Type': 'application/json',
@@ -290,6 +299,9 @@ async function callAI(text: string, provider: string, apiKey: string, systemProm
     headers['X-Title'] = 'Viral Transcript Engine';
   }
 
+  // Trunca o texto antes de enviar
+  const safeText = truncateTranscript(text);
+
   const { default: nodeFetch } = await import('node-fetch');
   const fetchFn = (global as any).fetch || nodeFetch;
 
@@ -300,10 +312,10 @@ async function callAI(text: string, provider: string, apiKey: string, systemProm
       model,
       messages: [
         { role: 'system', content: systemPrompt },
-        { role: 'user', content: `Analise este transcript e extraia EXATAMENTE 10 cortes virais:\n\n${text}` }
+        { role: 'user', content: `Analise este transcript e extraia os 10 melhores cortes virais:\n\n${safeText}` }
       ],
       temperature: 0.75,
-      max_tokens: 4096,
+      max_tokens: 2800,
     })
   });
 
@@ -316,7 +328,6 @@ async function callAI(text: string, provider: string, apiKey: string, systemProm
   const content = data.choices?.[0]?.message?.content || '';
   const clean = content.replace(/```json\n?/g, '').replace(/```\n?/g, '').trim();
 
-  // Extrai apenas o array JSON da resposta
   const arrayStart = clean.indexOf('[');
   const arrayEnd = clean.lastIndexOf(']');
   if (arrayStart === -1 || arrayEnd === -1) throw new Error('IA não retornou um array JSON válido.');

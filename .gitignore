@@ -22,3 +22,8 @@ dist-ssr
 *.njsproj
 *.sln
 *.sw?
+
+# Banco de dados local (contém API Keys — NUNCA versionar)
+.db/
+prisma/dev.db
+prisma/*.db
