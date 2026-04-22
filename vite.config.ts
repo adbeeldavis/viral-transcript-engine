@@ -128,7 +128,7 @@ function apiPlugin() {
 
         // ── POST /api/transcripts/process — Inicia o processamento ──────────
         if (req.method === 'POST' && req.url === '/api/transcripts/process') {
-          const { originalText, provider, apiKey, niche, preset } = body;
+          const { originalText, provider, apiKey, niche, preset, cutCount } = body;
 
           if (!originalText || !apiKey) {
             res.statusCode = 400;
@@ -136,45 +136,62 @@ function apiPlugin() {
             return;
           }
 
+          // Modo ilimitado para transcritos > 2000 palavras
+          const wordCount = originalText.trim().split(/\s+/).filter(Boolean).length;
+          const isUnlimited = wordCount > 2000;
+          const requestedCuts = isUnlimited ? 'o máximo possível (sem limite)' : String(Math.min(Math.max(Number(cutCount) || 10, 5), 30));
+          const maxCuts = isUnlimited ? 999 : Math.min(Math.max(Number(cutCount) || 10, 5), 30);
+
           const transcriptId = `tr_${Date.now()}_${Math.random().toString(36).slice(2)}`;
 
           // Estado em memória (para polling rápido)
           (global as any).__transcripts = (global as any).__transcripts || {};
-          (global as any).__transcripts[transcriptId] = { id: transcriptId, status: 'PROCESSING', cuts: [] };
+          (global as any).__transcripts[transcriptId] = { id: transcriptId, status: 'PROCESSING', cuts: [], wordCount, isUnlimited };
 
           // Salva no banco com status PROCESSING
           const db = readDB();
           db.transcripts = db.transcripts || [];
           db.transcripts.push({
             id: transcriptId, status: 'PROCESSING', originalText,
-            niche: niche || 'Geral', preset: preset || 'Viral',
+            niche: niche || 'Geral', preset: preset || 'Viral', wordCount, isUnlimited,
             createdAt: Date.now(), cuts: []
           });
           writeDB(db);
 
           // Responde imediatamente (não bloqueia)
-          res.end(JSON.stringify({ transcriptId, status: 'PROCESSING' }));
+          res.end(JSON.stringify({ transcriptId, status: 'PROCESSING', wordCount, isUnlimited }));
 
           // Worker em background
           setImmediate(async () => {
             try {
-              const systemPrompt = buildAggressivePrompt(niche || 'Geral', preset || 'Viral');
-              console.log(`[Worker] Iniciando análise da IA para ${transcriptId}...`);
-              const rawCuts = await callAI(originalText, provider, apiKey, systemPrompt);
+              const systemPrompt = buildAggressivePrompt(niche || 'Geral', preset || 'Viral', requestedCuts, isUnlimited);
+              console.log(`[Worker] Iniciando análise: ${wordCount} palavras, ${isUnlimited ? 'modo ilimitado' : maxCuts + ' cortes'}`);
+              const rawCuts = await callAI(originalText, provider, apiKey, systemPrompt, maxCuts);
 
-              // Enriquece cada corte com timestamps estimados
-              const enrichedCuts = rawCuts.slice(0, 10).map((cut: any, i: number) => {
+              // Deduplicar por timestamp (evita cortes sobrepostos)
+              const usedRanges: Array<{start: number, end: number}> = [];
+              const enrichedCuts: any[] = [];
+              for (let i = 0; i < rawCuts.length && enrichedCuts.length < maxCuts; i++) {
+                const cut = rawCuts[i];
                 const ts = estimateTimestamps(originalText, cut.text);
-                return {
+                const dur = ts.endSec - ts.startSec;
+                // Filtro: mínimo 10 segundos
+                if (dur < 10) continue;
+                // Filtro: sem sobreposição com corte existente
+                const overlap = usedRanges.some(r => ts.startSec < r.end && ts.endSec > r.start);
+                if (overlap) continue;
+                usedRanges.push({ start: ts.startSec, end: ts.endSec });
+                enrichedCuts.push({
                   ...cut,
                   id: `cut_${i}_${Date.now()}`,
                   startSec: ts.startSec,
                   endSec: ts.endSec,
                   startFormatted: formatTime(ts.startSec),
                   endFormatted: formatTime(ts.endSec),
-                  durationSec: ts.endSec - ts.startSec,
-                };
-              });
+                  durationSec: dur,
+                  captions: {}, // slot para legendas geradas depois
+                });
+              }
 
               // Atualiza memória
               (global as any).__transcripts[transcriptId] = {
@@ -205,6 +222,56 @@ function apiPlugin() {
           return;
         }
 
+        // ── POST /api/captions/generate — Gera legenda independente por corte ──
+        if (req.method === 'POST' && req.url === '/api/captions/generate') {
+          const { cutText, cutId, transcriptId, provider, apiKey, platform, objective, ctaType, ctaText, tone, includeHashtags, additionalContext } = body;
+          if (!cutText || !apiKey) { res.statusCode = 400; res.end(JSON.stringify({ error: 'Texto do corte e API Key são obrigatórios.' })); return; }
+
+          res.end(JSON.stringify({ status: 'GENERATING', captionJobId: `cap_${Date.now()}` }));
+
+          setImmediate(async () => {
+            try {
+              const captionPrompt = buildCaptionPrompt(platform, objective, ctaType, ctaText, tone, includeHashtags, additionalContext);
+              const { default: nodeFetch } = await import('node-fetch');
+              const fetchFn = (global as any).fetch || nodeFetch;
+              const url = provider === 'openai' ? 'https://api.openai.com/v1/chat/completions' : 'https://openrouter.ai/api/v1/chat/completions';
+              const model = provider === 'openai' ? 'gpt-4o-mini' : 'anthropic/claude-3.5-sonnet';
+              const headers: any = { 'Content-Type': 'application/json', 'Authorization': `Bearer ${apiKey}` };
+              if (provider === 'openrouter') { headers['HTTP-Referer'] = 'http://localhost:5173'; headers['X-Title'] = 'Viral Transcript Engine'; }
+              const r = await fetchFn(url, { method: 'POST', headers, body: JSON.stringify({ model, messages: [{ role: 'system', content: captionPrompt }, { role: 'user', content: cutText }], temperature: 0.8, max_tokens: 600 }) });
+              const d = await r.json() as any;
+              const raw = d.choices?.[0]?.message?.content || '';
+              // Persiste a legenda gerada no banco
+              const db = readDB();
+              const tIdx = (db.transcripts || []).findIndex((t: any) => t.id === transcriptId);
+              if (tIdx >= 0) {
+                const cIdx = (db.transcripts[tIdx].cuts || []).findIndex((c: any) => c.id === cutId);
+                if (cIdx >= 0) { db.transcripts[tIdx].cuts[cIdx].captions = db.transcripts[tIdx].cuts[cIdx].captions || {}; db.transcripts[tIdx].cuts[cIdx].captions[platform] = raw; writeDB(db); }
+              }
+              // Armazena em memória
+              (global as any).__captions = (global as any).__captions || {};
+              (global as any).__captions[`${transcriptId}_${cutId}_${platform}`] = raw;
+              console.log(`[Caption] ✅ Legenda gerada para ${platform}`);
+            } catch (e: any) { console.error('[Caption] ❌', e.message); }
+          });
+          return;
+        }
+
+        // ── GET /api/captions/:transcriptId/:cutId/:platform — Busca legenda gerada ──
+        const capMatch = req.url?.match(/^\/api\/captions\/([^/]+)\/([^/]+)\/([^/]+)$/);
+        if (req.method === 'GET' && capMatch) {
+          const [, tId, cId, plat] = capMatch;
+          const key = `${tId}_${cId}_${plat}`;
+          const mem = (global as any).__captions?.[key];
+          if (mem) { res.end(JSON.stringify({ caption: mem, status: 'READY' })); return; }
+          const db = readDB();
+          const tr = (db.transcripts || []).find((t: any) => t.id === tId);
+          const cut = (tr?.cuts || []).find((c: any) => c.id === cId);
+          if (cut?.captions?.[plat]) { res.end(JSON.stringify({ caption: cut.captions[plat], status: 'READY' })); return; }
+          res.end(JSON.stringify({ status: 'NOT_READY' }));
+          return;
+        }
+
         // ── GET /api/transcripts/:id — Polling ──────────────────────────────
         const pollMatch = req.url?.match(/^\/api\/transcripts\/(.+)$/);
         if (req.method === 'GET' && pollMatch) {
@@ -227,7 +294,10 @@ function apiPlugin() {
 }
 
 // ─── Prompt Viral Elite Engine ─────────────────────────────────────────────────
-function buildAggressivePrompt(niche: string, preset: string): string {
+function buildAggressivePrompt(niche: string, preset: string, cutCount: string = '10', isUnlimited: boolean = false): string {
+  const cutInstruction = isUnlimited
+    ? 'Extraia O MÁXIMO POSSÍVEL de cortes únicos (sem limite de quantidade). Cada corte deve ter timestamp DIFERENTE dos demais.'
+    : `Extraia EXATAMENTE ${cutCount} cortes.`;
   return `Você é o VIRAL ELITE ENGINE — motor de análise de curto-forma especializado no nicho '${niche}' com estratégia '${preset}'.
 
 FILOSOFIA: Todo corte deve vencer 4 etapas: parar o scroll → segurar atenção → recompensar rápido → deixar resíduo emocional ou intelectual. Não aprove cortes curtos e vazios. Prefira 10–17 segundos com impacto real a 6 segundos sem sentido.
@@ -299,7 +369,10 @@ RETORNE EXATAMENTE um array JSON com até 10 objetos. Sem markdown. Sem texto fo
   }
 ]
 
-REGRA FINAL: Descarte qualquer corte que não faça pelo menos 4 destas 6 coisas: (1) parar scroll, (2) despertar emoção, (3) criar curiosidade/tensão, (4) entregar payoff, (5) gerar vontade de reagir, (6) deixar frase memorável. Nunca invente — use apenas o que está no transcript.`;
+QUANTIDADE: ${cutInstruction}
+DURAÇÃO MÍNIMA: Cada corte deve ter no mínimo 10 segundos de fala (23+ palavras). Descarte trechos menores.
+NÃO REPITA: Cada corte deve cobrir um trecho diferente do transcript. Não use o mesmo ponto de início.
+REGRA FINAL: Descarte cortes que não façam pelo menos 4 destas 6 coisas: (1) parar scroll, (2) despertar emoção, (3) criar curiosidade/tensão, (4) entregar payoff, (5) gerar vontade de reagir, (6) deixar frase memorável. Nunca invente — use apenas o que está no transcript.`;
 }
 
 // ─── Trunca o transcript para evitar limites de TPM ─────────────────────────
@@ -311,7 +384,7 @@ function truncateTranscript(text: string, maxWords = 3500): string {
 }
 
 // ─── Chamada para a API de IA ─────────────────────────────────────────────────
-async function callAI(text: string, provider: string, apiKey: string, systemPrompt: string): Promise<any[]> {
+async function callAI(text: string, provider: string, apiKey: string, systemPrompt: string, maxCuts: number = 10): Promise<any[]> {
   const url = provider === 'openai'
     ? 'https://api.openai.com/v1/chat/completions'
     : 'https://openrouter.ai/api/v1/chat/completions';
@@ -342,10 +415,10 @@ async function callAI(text: string, provider: string, apiKey: string, systemProm
       model,
       messages: [
         { role: 'system', content: systemPrompt },
-        { role: 'user', content: `Analise este transcript e extraia os 10 melhores cortes virais:\n\n${safeText}` }
+        { role: 'user', content: `Analise este transcript e extraia os cortes virais solicitados:\n\n${safeText}` }
       ],
       temperature: 0.75,
-      max_tokens: 3500,
+      max_tokens: Math.min(500 + maxCuts * 350, 4096),
     })
   });
 
@@ -362,6 +435,55 @@ async function callAI(text: string, provider: string, apiKey: string, systemProm
   const arrayEnd = clean.lastIndexOf(']');
   if (arrayStart === -1 || arrayEnd === -1) throw new Error('IA não retornou um array JSON válido.');
   return JSON.parse(clean.slice(arrayStart, arrayEnd + 1));
+}
+
+// ─── Prompt de Geração de Legenda Independente ────────────────────────────────
+function buildCaptionPrompt(
+  platform: string, objective: string, ctaType: string, ctaText: string,
+  tone: string, includeHashtags: boolean, additionalContext: string
+): string {
+  const platformLimits: Record<string, number> = { TikTok: 2200, 'Instagram Reels': 2200, 'YouTube Shorts': 500, 'X/Twitter': 280, LinkedIn: 3000 };
+  const charLimit = platformLimits[platform] || 2000;
+  const platformNotes: Record<string, string> = {
+    TikTok: 'Use linguagem jovem, emojis estratégicos, frases diretas, palavras que geram debate ou identificação.',
+    'Instagram Reels': 'Abra com gancho visual, use espaçamento com quebras de linha, finalize com CTA claro e até 5 hashtags relevantes.',
+    'YouTube Shorts': 'Seja muito conciso. Máximo 3 frases. O título do vídeo importa mais que a legenda.',
+    'X/Twitter': `Máximo ${charLimit} caracteres. Sem hashtags ou apenas 1-2. Frase de opinião forte que gera resposta.`,
+    LinkedIn: 'Tom mais profissional mas ainda pessoal. Abra com insight, desenvolva com contexto, finalize com reflexão ou CTA profissional.',
+  };
+  const objectiveMap: Record<string, string> = {
+    Engajamento: 'Maximize comentários, reações e compartilhamentos. Termine com pergunta ou provocação.',
+    Venda: 'Desperte desejo, gere urgência, dirija para ação de compra ou acesso.',
+    Educação: 'Entregue valor claro, resumo do aprendizado e convide para mais conteúdo.',
+    Compartilhamento: 'Faça a legenda ser quotável, identificável e digna de ser repostada.',
+    Seguidores: 'Deixe claro o que o usuário ganha seguindo. Crie expectativa de mais conteúdo.',
+  };
+  const ctaMap: Record<string, string> = {
+    Seguir: 'Me segue para mais conteúdo assim.',
+    Comentar: 'Comenta aqui o que você acha.',
+    Salvar: 'Salva esse vídeo para não perder.',
+    Compartilhar: 'Compartilha com quem precisa ver isso.',
+    'Link na bio': 'O link está na bio.',
+    Personalizado: ctaText || '',
+  };
+
+  return `Você é um especialista em copywriting para redes sociais.
+Plataforma: ${platform} (limite: ${charLimit} caracteres)
+${platformNotes[platform] || ''}
+
+Objetivo da legenda: ${objective}
+${objectiveMap[objective] || ''}
+
+Tom: ${tone}
+CTA desejado: ${ctaMap[ctaType] || ctaText || 'Nenhum'}
+Incluir hashtags: ${includeHashtags ? 'Sim (máx 10 relevantes no final)' : 'Não'}
+${additionalContext ? 'Contexto adicional: ' + additionalContext : ''}
+
+TAREFA: Crie UMA legenda completa e otimizada para o texto do corte que será enviado a seguir.
+- Respeite rigorosamente o limite de caracteres da plataforma.
+- Use quebras de linha estrategicamente.
+- O gancho deve estar nas primeiras palavras.
+- Entregue APENAS o texto final da legenda, pronto para copiar e colar. Sem explicações.`;
 }
 
 export default defineConfig({

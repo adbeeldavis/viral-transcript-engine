@@ -92,9 +92,24 @@ export default function App() {
   const [copied, setCopied] = useState(false);
   const [history, setHistory] = useState<any[]>([]);
   const [keySaved, setKeySaved] = useState(false);
-  const [activeTab, setActiveTab] = useState<'analysis'|'platforms'|'editing'>('analysis');
+  const [activeTab, setActiveTab] = useState<'analysis'|'platforms'|'editing'|'caption'>('analysis');
+  // Seletor de cortes
+  const [cutCount, setCutCount] = useState(10);
+  const [wordCount, setWordCount] = useState(0);
+  const [isUnlimited, setIsUnlimited] = useState(false);
+  const [transcriptId, setTranscriptId] = useState<string|null>(null);
+  // Gerador de legenda
+  const [capPlatform, setCapPlatform] = useState('TikTok');
+  const [capObjective, setCapObjective] = useState('Engajamento');
+  const [capCTAType, setCapCTAType] = useState('Seguir');
+  const [capCTAText, setCapCTAText] = useState('');
+  const [capTone, setCapTone] = useState('Casual');
+  const [capHashtags, setCapHashtags] = useState(true);
+  const [capContext, setCapContext] = useState('');
+  const [capResult, setCapResult] = useState('');
+  const [capLoading, setCapLoading] = useState(false);
 
-  const STEPS = ['Ingerindo transcript...','Limpando e normalizando texto...','Segmentando blocos narrativos...','Detectando gatilhos emocionais...','Calculando Score Viral...','Estimando timestamps...','Montando 10 cortes finais...'];
+  const STEPS = ['Ingerindo transcript...','Limpando e normalizando texto...','Segmentando blocos narrativos...','Detectando gatilhos emocionais...','Calculando Score Viral...','Estimando timestamps...','Montando cortes finais...'];
 
   // Carrega API Key salva e histórico ao iniciar
   useEffect(() => {
@@ -159,9 +174,22 @@ export default function App() {
     e.preventDefault(); setIsDragging(false);
     const file=e.dataTransfer.files?.[0]; if(!file) return;
     const r=new FileReader();
-    r.onload=ev=>setTranscript(ev.target?.result as string||'');
+    r.onload=ev=>{
+      const text = ev.target?.result as string||'';
+      setTranscript(text);
+      const wc = text.trim().split(/\s+/).filter(Boolean).length;
+      setWordCount(wc);
+      setIsUnlimited(wc > 2000);
+    };
     r.readAsText(file);
   },[]);
+
+  const handleTranscriptChange = (val: string) => {
+    setTranscript(val);
+    const wc = val.trim().split(/\s+/).filter(Boolean).length;
+    setWordCount(wc);
+    setIsUnlimited(wc > 2000);
+  };
 
   const handleProcess = async ()=>{
     if(!transcript.trim()){ setError('Insira o transcript.'); return; }
@@ -170,13 +198,14 @@ export default function App() {
     try {
       const res = await fetch('/api/transcripts/process',{
         method:'POST', headers:{'Content-Type':'application/json'},
-        body: JSON.stringify({ originalText:transcript, provider, apiKey, niche, preset })
+        body: JSON.stringify({ originalText:transcript, provider, apiKey, niche, preset, cutCount })
       });
       const json = await res.json();
       if(!res.ok) throw new Error(json.error||'Erro ao iniciar processamento.');
-      const { transcriptId } = json;
+      const { transcriptId: tid } = json;
+      setTranscriptId(tid);
       const poll = async ()=>{
-        const r = await fetch(`/api/transcripts/${transcriptId}`);
+        const r = await fetch(`/api/transcripts/${tid}`);
         const d = await r.json();
         if(d.status==='COMPLETED'){
           if(!d.cuts?.length){ setError('Nenhum corte extraído. Tente um texto maior.'); setStep('upload'); return; }
@@ -189,6 +218,35 @@ export default function App() {
       };
       setTimeout(poll,3000);
     } catch(err:any){ setError(err.message); setStep('upload'); }
+  };
+
+  const handleGenerateCaption = async () => {
+    if (!activeCut || !apiKey.trim()) return;
+    setCapLoading(true); setCapResult('');
+    try {
+      const res = await fetch('/api/captions/generate', {
+        method: 'POST', headers: {'Content-Type':'application/json'},
+        body: JSON.stringify({
+          cutText: activeCut.text, cutId: activeCut.id,
+          transcriptId, provider, apiKey,
+          platform: capPlatform, objective: capObjective,
+          ctaType: capCTAType, ctaText: capCTAText,
+          tone: capTone, includeHashtags: capHashtags,
+          additionalContext: capContext
+        })
+      });
+      if (!res.ok) throw new Error('Erro ao gerar legenda.');
+      // Polling for result
+      const pollCap = async (attempt = 0) => {
+        await new Promise(r => setTimeout(r, 2000));
+        const r = await fetch(`/api/captions/${transcriptId}/${activeCut.id}/${encodeURIComponent(capPlatform)}`);
+        const d = await r.json();
+        if (d.status === 'READY') { setCapResult(d.caption); setCapLoading(false); }
+        else if (attempt < 15) pollCap(attempt + 1);
+        else { setCapResult('Tempo esgotado. Tente novamente.'); setCapLoading(false); }
+      };
+      pollCap();
+    } catch(e:any){ setCapResult(e.message); setCapLoading(false); }
   };
 
   const exportJSON = ()=>{
@@ -304,9 +362,9 @@ export default function App() {
               <div className="upload-page">
                 <div className="upload-hero">
                   <h1>A Ciência<br/>por trás da<br/>Viralização</h1>
-                  <p>Cole seu transcript. A IA extrai <strong>10 cortes</strong> com timestamps, narrativa e score viral.</p>
+                  <p>Cole seu transcript. A IA extrai <strong>{isUnlimited ? 'cortes ilimitados' : `${cutCount} cortes`}</strong> com timestamps, narrativa e score viral.</p>
                   <div className="hero-badges">
-                    <span className="badge">🎯 10 cortes ranqueados</span>
+                    <span className="badge">{isUnlimited ? '♾️ Modo Ilimitado' : `🎯 ${cutCount} cortes`}</span>
                     <span className="badge">⏱️ Timestamps precisos</span>
                     <span className="badge">🧠 Análise narrativa</span>
                     <span className="badge">💾 Salvo no banco</span>
@@ -319,14 +377,45 @@ export default function App() {
                     <Upload size={26} color="var(--primary)"/>
                     <span>Arraste <strong>.txt .srt .vtt .md</strong> ou</span>
                     <label className="file-btn">Escolher arquivo
-                      <input type="file" accept=".txt,.srt,.vtt,.md,.json" onChange={e=>{const f=e.target.files?.[0];if(!f)return;const r=new FileReader();r.onload=ev=>setTranscript(ev.target?.result as string||'');r.readAsText(f);}} hidden/>
+                      <input type="file" accept=".txt,.srt,.vtt,.md,.json" onChange={e=>{const f=e.target.files?.[0];if(!f)return;const r=new FileReader();r.onload=ev=>handleTranscriptChange(ev.target?.result as string||'');r.readAsText(f);}} hidden/>
                     </label>
                   </div>
                   <div className="divider"><span>ou cole o texto</span></div>
                   <textarea className="transcript-input" rows={9}
                     placeholder="Cole o transcript bruto aqui (vídeo, podcast, aula, entrevista, live)..."
-                    value={transcript} onChange={e=>setTranscript(e.target.value)}/>
-                  {transcript&&<div className="transcript-meta">{transcript.split(' ').filter(Boolean).length} palavras · ~{Math.round(transcript.split(' ').filter(Boolean).length/2.33)}s de fala</div>}
+                    value={transcript} onChange={e=>handleTranscriptChange(e.target.value)}/>
+                  {wordCount > 0 && (
+                    <div className="transcript-meta">
+                      <span>{wordCount.toLocaleString('pt-BR')} palavras</span>
+                      <span>~{Math.round(wordCount/2.33)}s de fala</span>
+                      {isUnlimited
+                        ? <span className="meta-badge unlimited">♾️ Modo Ilimitado (sem limite de cortes)</span>
+                        : <span className="meta-badge">Máx {Math.min(30, Math.floor(wordCount/40))} cortes disponíveis</span>
+                      }
+                    </div>
+                  )}
+                  {/* Seletor de quantidade de cortes */}
+                  <div className="cut-count-selector">
+                    <label className="cut-count-label">
+                      <span>✂️ Quantidade de Cortes</span>
+                      {isUnlimited
+                        ? <span className="unlimited-badge">♾️ Ilimitado (transcript &gt; 2.000 palavras)</span>
+                        : <span className="count-value">{cutCount}</span>
+                      }
+                    </label>
+                    {!isUnlimited && (
+                      <div className="cut-count-controls">
+                        <input type="range" min={5} max={30} step={1} value={cutCount}
+                          onChange={e=>setCutCount(Number(e.target.value))}
+                          className="cut-range"/>
+                        <div className="range-marks">
+                          {[5,10,15,20,25,30].map(v=>(
+                            <button key={v} className={`mark-btn ${cutCount===v?'active':''}`} onClick={()=>setCutCount(v)}>{v}</button>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+                  </div>
                   <div className="options-grid">
                     <div className="input-group"><label>Nicho</label>
                       <select value={niche} onChange={e=>setNiche(e.target.value)}>{NICHES.map(n=><option key={n}>{n}</option>)}</select>
@@ -336,7 +425,7 @@ export default function App() {
                     </div>
                   </div>
                   <button className="btn btn-cta" onClick={handleProcess}>
-                    Gerar 10 Cortes com {provider==='openai'?'OpenAI':'OpenRouter'} <TrendingUp size={20}/>
+                    {isUnlimited ? 'Extrair Cortes Ilimitados' : `Gerar ${cutCount} Cortes`} com {provider==='openai'?'OpenAI':'OpenRouter'} <TrendingUp size={20}/>
                   </button>
                 </div>
               </div>
@@ -442,9 +531,9 @@ export default function App() {
                 {/* Tabs de Análise */}
                 <div className="glass-panel tabs-panel">
                   <div className="tab-bar">
-                    {(['analysis','platforms','editing'] as const).map(tab=>(
+                    {(['analysis','platforms','editing','caption'] as const).map(tab=>(
                       <button key={tab} className={`tab-btn ${activeTab===tab?'active':''}`} onClick={()=>setActiveTab(tab)}>
-                        {tab==='analysis'?'📊 Análise':tab==='platforms'?'📱 Plataformas':'✂️ Edição'}
+                        {tab==='analysis'?'📊 Análise':tab==='platforms'?'📱 Plataformas':tab==='editing'?'✂️ Edição':'📝 Legenda'}
                       </button>
                     ))}
                   </div>
@@ -544,6 +633,78 @@ export default function App() {
                           <button className="btn btn-danger">Descartar</button>
                           <button className="btn btn-success"><CheckCircle size={15}/> Aprovar Corte</button>
                         </div>
+                      </motion.div>
+                    )}
+                    {/* Tab: Legenda */}
+                    {activeTab==='caption'&&(
+                      <motion.div key="caption" initial={{opacity:0,x:10}} animate={{opacity:1,x:0}} exit={{opacity:0,x:-10}} className="tab-content caption-tab">
+                        <div className="caption-header">
+                          <h4>📝 Gerador de Legenda Independente</h4>
+                          <p className="caption-subtitle">Configure e gere a legenda deste corte separadamente, em qualquer momento.</p>
+                        </div>
+                        <div className="caption-form">
+                          <div className="cap-row">
+                            <div className="cap-group">
+                              <label>Plataforma</label>
+                              <select value={capPlatform} onChange={e=>{setCapPlatform(e.target.value);setCapResult('');}}>
+                                {['TikTok','Instagram Reels','YouTube Shorts','X/Twitter','LinkedIn'].map(p=><option key={p}>{p}</option>)}
+                              </select>
+                            </div>
+                            <div className="cap-group">
+                              <label>Objetivo</label>
+                              <select value={capObjective} onChange={e=>setCapObjective(e.target.value)}>
+                                {['Engajamento','Venda','Educação','Compartilhamento','Seguidores'].map(o=><option key={o}>{o}</option>)}
+                              </select>
+                            </div>
+                          </div>
+                          <div className="cap-row">
+                            <div className="cap-group">
+                              <label>Tipo de CTA</label>
+                              <select value={capCTAType} onChange={e=>setCapCTAType(e.target.value)}>
+                                {['Seguir','Comentar','Salvar','Compartilhar','Link na bio','Personalizado'].map(c=><option key={c}>{c}</option>)}
+                              </select>
+                            </div>
+                            <div className="cap-group">
+                              <label>Tom</label>
+                              <select value={capTone} onChange={e=>setCapTone(e.target.value)}>
+                                {['Casual','Profissional','Emocional','Direto','Humorístico'].map(t=><option key={t}>{t}</option>)}
+                              </select>
+                            </div>
+                          </div>
+                          {capCTAType==='Personalizado'&&(
+                            <div className="cap-group full">
+                              <label>CTA Personalizado</label>
+                              <input type="text" placeholder="Ex: Acesse o link e garanta sua vaga" value={capCTAText} onChange={e=>setCapCTAText(e.target.value)}/>
+                            </div>
+                          )}
+                          <div className="cap-row cap-row-inline">
+                            <label className="toggle-label">
+                              <span>Incluir hashtags</span>
+                              <div className={`toggle-switch ${capHashtags?'on':''}`} onClick={()=>setCapHashtags(h=>!h)}>
+                                <div className="toggle-knob"/>
+                              </div>
+                            </label>
+                          </div>
+                          <div className="cap-group full">
+                            <label>Contexto adicional (opcional)</label>
+                            <input type="text" placeholder="Ex: Produto vendido, link da bio, nome do canal..." value={capContext} onChange={e=>setCapContext(e.target.value)}/>
+                          </div>
+                          <button className={`btn btn-cta cap-generate-btn ${capLoading?'loading':''}`} onClick={handleGenerateCaption} disabled={capLoading}>
+                            {capLoading ? <><Loader size={16}/> Gerando legenda...</> : <><Sparkles size={16}/> Gerar Legenda para {capPlatform}</>}
+                          </button>
+                        </div>
+                        {capResult&&(
+                          <div className="cap-result">
+                            <div className="cap-result-header">
+                              <span>✅ Legenda gerada para {capPlatform}</span>
+                              <button className="icon-btn" onClick={()=>copyText(capResult)}>
+                                {copied?<CheckCircle size={14} color="var(--accent-green)"/>:<Copy size={14}/>}
+                              </button>
+                            </div>
+                            <textarea className="cap-result-text" rows={6} value={capResult} onChange={e=>setCapResult(e.target.value)}/>
+                            <div className="cap-char-count">{capResult.length} caracteres</div>
+                          </div>
+                        )}
                       </motion.div>
                     )}
                   </AnimatePresence>
