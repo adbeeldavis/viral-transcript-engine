@@ -1,6 +1,10 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { Sparkles, TrendingUp, Download, Play, CheckCircle, Settings, Loader, Flame, LayoutTemplate } from 'lucide-react';
+import {
+  Sparkles, TrendingUp, Download, Play, CheckCircle,
+  Settings, Loader, Flame, LayoutTemplate, X, Upload,
+  ChevronDown, ChevronUp, Copy, ExternalLink
+} from 'lucide-react';
 import './index.css';
 
 export type AIProvider = 'openai' | 'openrouter';
@@ -18,409 +22,449 @@ export interface CutResult {
   justification: string;
 }
 
-function App() {
+const NICHES = ['Negócios & Finanças', 'Saúde & Bem-Estar', 'Marketing Digital', 'Humor & Entretenimento', 'Desenvolvimento Pessoal', 'Educação', 'Espiritualidade', 'Relacionamentos', 'Tecnologia', 'Games'];
+const PRESETS = ['Viral Agressivo (Alta Tensão)', 'Autoridade Premium (Alta Credibilidade)', 'Storytelling Emocional (Alta Conexão)', 'Cortes para Podcast', 'Cortes para Entrevistas', 'Cortes para Vendas'];
+
+export default function App() {
   const [step, setStep] = useState<'upload' | 'processing' | 'results'>('upload');
-  
-  // AI Settings State
   const [provider, setProvider] = useState<AIProvider>('openai');
   const [apiKey, setApiKey] = useState('');
   const [showSettings, setShowSettings] = useState(false);
-  
-  // Content State
   const [transcript, setTranscript] = useState('');
-  const [niche, setNiche] = useState('Negócios & Finanças');
-  const [preset, setPreset] = useState('Viral Agressivo');
-  
-  // Results State
+  const [niche, setNiche] = useState(NICHES[0]);
+  const [preset, setPreset] = useState(PRESETS[0]);
   const [cuts, setCuts] = useState<CutResult[]>([]);
   const [activeCut, setActiveCut] = useState<CutResult | null>(null);
   const [error, setError] = useState<string | null>(null);
-
-  // Player State
   const [isPlaying, setIsPlaying] = useState(false);
   const [activeWordIndex, setActiveWordIndex] = useState(-1);
   const [isDragging, setIsDragging] = useState(false);
+  const [processingStep, setProcessingStep] = useState(0);
+  const [copied, setCopied] = useState(false);
+
+  const PROCESSING_STEPS = [
+    'Ingerindo o transcript...',
+    'Limpando e normalizando texto...',
+    'Segmentando em blocos narrativos...',
+    'Detectando gatilhos emocionais...',
+    'Calculando Score Viral...',
+    'Montando os cortes finais...',
+  ];
+
+  useEffect(() => {
+    if (step === 'processing') {
+      const interval = setInterval(() => {
+        setProcessingStep(prev => (prev < PROCESSING_STEPS.length - 1 ? prev + 1 : prev));
+      }, 1800);
+      return () => clearInterval(interval);
+    }
+  }, [step]);
+
+  const handleDrop = useCallback((e: React.DragEvent) => {
+    e.preventDefault();
+    setIsDragging(false);
+    const file = e.dataTransfer.files?.[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = (ev) => setTranscript(ev.target?.result as string || '');
+    reader.readAsText(file);
+  }, []);
+
+  const handleFileInput = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = (ev) => setTranscript(ev.target?.result as string || '');
+    reader.readAsText(file);
+  };
 
   const handleProcess = async () => {
-    if (!transcript.trim()) {
-      setError('Por favor, insira o texto do transcript.');
-      return;
-    }
-    if (!apiKey.trim()) {
-      setError(`Por favor, insira a sua API Key da ${provider === 'openai' ? 'OpenAI' : 'OpenRouter'} nas configurações.`);
-      setShowSettings(true);
-      return;
-    }
-
+    if (!transcript.trim()) { setError('Insira o texto do transcript.'); return; }
+    if (!apiKey.trim()) { setError('Insira sua API Key nas ⚙️ Configurações de IA.'); setShowSettings(true); return; }
     setError(null);
+    setProcessingStep(0);
     setStep('processing');
 
     try {
-      const resStart = await fetch('http://localhost:3001/api/transcripts/process', {
+      const res = await fetch('/api/transcripts/process', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ originalText: transcript, provider, apiKey, niche, preset })
+        body: JSON.stringify({ originalText: transcript, provider, apiKey, niche, preset }),
       });
 
-      if (!resStart.ok) throw new Error("Erro ao iniciar o processamento na API.");
-      
-      const { transcriptId } = await resStart.json();
+      const json = await res.json();
 
-      const checkStatus = async () => {
-        const resCheck = await fetch(`http://localhost:3001/api/transcripts/${transcriptId}`);
-        const data = await resCheck.json();
+      if (!res.ok) {
+        throw new Error(json.error || 'Erro ao iniciar processamento.');
+      }
 
-        if (data.status === 'COMPLETED') {
-          if (data.cuts.length === 0) {
-            setError("A IA não retornou nenhum corte válido.");
-            setStep('upload');
-            return;
-          }
-          setCuts(data.cuts);
-          setActiveCut(data.cuts[0]);
+      const { transcriptId } = json;
+
+      // Polling
+      const poll = async () => {
+        const r = await fetch(`/api/transcripts/${transcriptId}`);
+        const d = await r.json();
+        if (d.status === 'COMPLETED') {
+          if (!d.cuts?.length) { setError('Nenhum corte extraído. Tente um texto maior.'); setStep('upload'); return; }
+          setCuts(d.cuts);
+          setActiveCut(d.cuts[0]);
           setStep('results');
-        } else if (data.status === 'ERROR') {
-          setError("Ocorreu um erro no processamento em background (IA).");
+        } else if (d.status === 'ERROR') {
+          setError(d.error || 'Erro no processamento pela IA. Verifique sua API Key.');
           setStep('upload');
         } else {
-          setTimeout(checkStatus, 2000);
+          setTimeout(poll, 2000);
         }
       };
-
-      setTimeout(checkStatus, 2000);
-
+      setTimeout(poll, 3000);
     } catch (err: any) {
-      setError(err.message || 'Erro inesperado ao processar.');
+      setError(err.message);
       setStep('upload');
     }
   };
 
   const exportJSON = () => {
-    if (!activeCut) return;
-    const dataStr = "data:text/json;charset=utf-8," + encodeURIComponent(JSON.stringify(activeCut, null, 2));
-    const downloadAnchorNode = document.createElement('a');
-    downloadAnchorNode.setAttribute("href", dataStr);
-    downloadAnchorNode.setAttribute("download", `corte_${activeCut.id || 'export'}.json`);
-    document.body.appendChild(downloadAnchorNode);
-    downloadAnchorNode.click();
-    downloadAnchorNode.remove();
+    if (!cuts.length) return;
+    const blob = new Blob([JSON.stringify(cuts, null, 2)], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `viral_cuts_${Date.now()}.json`;
+    a.click();
+    URL.revokeObjectURL(url);
   };
 
-  const handlePlaySimulation = () => {
-    if (!activeCut) return;
-    setIsPlaying(true);
-    setActiveWordIndex(0);
+  const copyText = async (text: string) => {
+    await navigator.clipboard.writeText(text);
+    setCopied(true);
+    setTimeout(() => setCopied(false), 2000);
   };
 
+  // Simulação de legenda chunk-by-chunk
   useEffect(() => {
-    if (isPlaying && activeCut) {
-      const words = activeCut.text.split(' ');
-      if (activeWordIndex < words.length - 1) {
-        const timer = setTimeout(() => {
-          setActiveWordIndex(prev => prev + 1);
-        }, 300);
-        return () => clearTimeout(timer);
-      } else {
-        const timer = setTimeout(() => {
-          setIsPlaying(false);
-          setActiveWordIndex(-1);
-        }, 1500);
-        return () => clearTimeout(timer);
-      }
+    if (!isPlaying || !activeCut) return;
+    const words = activeCut.text.split(' ');
+    if (activeWordIndex >= words.length - 1) {
+      const t = setTimeout(() => { setIsPlaying(false); setActiveWordIndex(-1); }, 1500);
+      return () => clearTimeout(t);
     }
+    const t = setTimeout(() => setActiveWordIndex(p => p + 1), 280);
+    return () => clearTimeout(t);
   }, [isPlaying, activeWordIndex, activeCut]);
+
+  const getScore = (cut: CutResult) => cut.totalScore ?? cut.score ?? Math.round(((cut.hookScore || 0) + (cut.retentionScore || 0) + (cut.emotionScore || 0)) / 3);
+
+  const scoreColor = (s: number) => s >= 85 ? 'var(--accent-green)' : s >= 70 ? 'var(--accent-orange)' : 'var(--accent-red)';
 
   return (
     <div className="app-container">
+      {/* Header */}
       <header>
         <div className="logo">
-          <Sparkles size={32} color="var(--primary)" />
-          Viral Transcript Engine
+          <Sparkles size={30} color="#9d4edd" />
+          <span>Viral Transcript Engine</span>
         </div>
-        <div style={{ display: 'flex', gap: '1rem', alignItems: 'center' }}>
-          <button className="btn btn-secondary" onClick={() => setShowSettings(!showSettings)}>
-            <Settings size={18} /> Configurações de IA
+        <div className="header-actions">
+          <button className={`btn btn-secondary ${showSettings ? 'active' : ''}`} onClick={() => setShowSettings(p => !p)}>
+            <Settings size={16} /> Configurações de IA
+            {showSettings ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
           </button>
           {step === 'results' && (
-            <button className="btn" onClick={() => { setStep('upload'); setCuts([]); setActiveCut(null); }}>
-              <LayoutTemplate size={18} /> Novo Projeto
+            <button className="btn" onClick={() => { setStep('upload'); setCuts([]); setActiveCut(null); setError(null); }}>
+              <LayoutTemplate size={16} /> Novo Projeto
             </button>
           )}
         </div>
       </header>
 
-      <main>
+      {/* Settings Panel */}
+      <AnimatePresence>
         {showSettings && (
-          <motion.div 
-            initial={{ opacity: 0, height: 0 }}
-            animate={{ opacity: 1, height: 'auto' }}
-            className="glass-panel"
-            style={{ marginBottom: '2rem' }}
+          <motion.div
+            initial={{ opacity: 0, y: -10 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: -10 }}
+            className="glass-panel settings-panel"
           >
-            <h3 style={{ marginBottom: '1.5rem', color: 'var(--primary)' }}>⚙️ Configurações de IA</h3>
-            <div style={{ display: 'grid', gridTemplateColumns: '1fr 2fr', gap: '2rem' }}>
+            <div className="settings-header">
+              <h3>⚙️ Configurações de Inteligência Artificial</h3>
+              <button className="icon-btn" onClick={() => setShowSettings(false)}><X size={18} /></button>
+            </div>
+            <div className="settings-grid">
               <div className="input-group">
-                <label>Provedor de Inteligência</label>
-                <select value={provider} onChange={(e) => setProvider(e.target.value as AIProvider)}>
-                  <option value="openai">OpenAI (GPT-4o)</option>
-                  <option value="openrouter">OpenRouter (Claude 3.5 Sonnet)</option>
-                </select>
+                <label>Provedor de IA</label>
+                <div className="provider-toggle">
+                  <button className={`toggle-btn ${provider === 'openai' ? 'active' : ''}`} onClick={() => setProvider('openai')}>
+                    OpenAI (GPT-4o)
+                  </button>
+                  <button className={`toggle-btn ${provider === 'openrouter' ? 'active' : ''}`} onClick={() => setProvider('openrouter')}>
+                    OpenRouter (Claude)
+                  </button>
+                </div>
               </div>
               <div className="input-group">
-                <label>Chave Secreta (API Key)</label>
-                <input 
-                  type="password" 
+                <label>
+                  API Key — {provider === 'openai' ? 'OpenAI' : 'OpenRouter'}
+                  <a href={provider === 'openai' ? 'https://platform.openai.com/api-keys' : 'https://openrouter.ai/keys'} target="_blank" rel="noreferrer" className="label-link">
+                    <ExternalLink size={12} /> Obter chave
+                  </a>
+                </label>
+                <input
+                  type="password"
                   placeholder={provider === 'openai' ? 'sk-proj-...' : 'sk-or-v1-...'}
-                  value={apiKey} 
-                  onChange={(e) => setApiKey(e.target.value)}
+                  value={apiKey}
+                  onChange={e => setApiKey(e.target.value)}
                 />
               </div>
             </div>
+            <p className="settings-note">🔒 Sua chave é enviada diretamente para a API — não armazenamos nenhum dado.</p>
           </motion.div>
         )}
+      </AnimatePresence>
 
+      {/* Error Banner */}
+      <AnimatePresence>
         {error && (
-          <motion.div initial={{ opacity: 0, scale: 0.95 }} animate={{ opacity: 1, scale: 1 }} style={{ background: 'rgba(239, 35, 60, 0.1)', border: '1px solid var(--accent-red)', padding: '1.25rem', borderRadius: '1rem', marginBottom: '2rem', color: '#ff4d4d', display: 'flex', alignItems: 'center', gap: '1rem' }}>
-            <span style={{ fontSize: '1.5rem' }}>⚠️</span>
-            <div>
-              <strong>Erro de Processamento:</strong> {error}
-            </div>
+          <motion.div className="error-banner" initial={{ opacity: 0, scale: 0.97 }} animate={{ opacity: 1, scale: 1 }} exit={{ opacity: 0 }}>
+            <span>⚠️ {error}</span>
+            <button className="icon-btn" onClick={() => setError(null)}><X size={16} /></button>
           </motion.div>
         )}
+      </AnimatePresence>
 
+      <main>
         <AnimatePresence mode="wait">
+          {/* ── UPLOAD STEP ── */}
           {step === 'upload' && (
-            <motion.div 
-              key="upload"
-              initial={{ opacity: 0, y: 30 }}
-              animate={{ opacity: 1, y: 0 }}
-              exit={{ opacity: 0, y: -30, filter: 'blur(10px)' }}
-              transition={{ duration: 0.4 }}
-              className="glass-panel"
-              style={{ maxWidth: '850px', margin: '2rem auto' }}
-            >
-              <div style={{ textAlign: 'center', marginBottom: '2.5rem' }}>
-                <h2 className="text-gradient" style={{ fontSize: '2.5rem', marginBottom: '0.5rem' }}>A Ciência por trás da Viralização.</h2>
-                <p style={{ color: 'var(--text-muted)', fontSize: '1.1rem' }}>Cole seu texto bruto e nossa IA extrairá os momentos de maior retenção.</p>
-              </div>
-              
-              <div 
-                onDragOver={(e) => { e.preventDefault(); setIsDragging(true); }}
-                onDragLeave={() => setIsDragging(false)}
-                onDrop={(e) => {
-                  e.preventDefault();
-                  setIsDragging(false);
-                  if (e.dataTransfer.files && e.dataTransfer.files.length > 0) {
-                    const file = e.dataTransfer.files[0];
-                    const reader = new FileReader();
-                    reader.onload = (event) => {
-                      if (event.target?.result) {
-                        setTranscript(event.target.result as string);
-                      }
-                    };
-                    reader.readAsText(file);
-                  }
-                }}
-                style={{ 
-                  border: isDragging ? '2px dashed var(--primary)' : '2px dashed var(--border-light)',
-                  background: isDragging ? 'rgba(157, 78, 221, 0.05)' : 'var(--bg-input)',
-                  borderRadius: '1rem', padding: '1.5rem', textAlign: 'center', marginBottom: '2rem', transition: 'all 0.3s ease'
-                }}
-              >
-                <div style={{ marginBottom: '1rem', color: 'var(--text-muted)', fontSize: '0.95rem' }}>
-                  Arraste e solte um arquivo .txt, .srt, .md ou .vtt aqui <br/> ou cole o texto diretamente abaixo:
+            <motion.div key="upload" initial={{ opacity: 0, y: 24 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -24 }} transition={{ duration: 0.35 }}>
+              <div className="upload-page">
+                <div className="upload-hero">
+                  <h1>A Ciência<br />por trás da Viralização</h1>
+                  <p>Cole ou arraste seu transcript. A IA extrai os momentos de maior retenção automaticamente.</p>
                 </div>
-                <textarea 
-                  rows={8} 
-                  placeholder="Cole o transcript bruto aqui..."
-                  value={transcript}
-                  onChange={(e) => setTranscript(e.target.value)}
-                  style={{ 
-                    width: '100%', resize: 'vertical', fontSize: '1.05rem', padding: '1.25rem', 
-                    background: 'rgba(0,0,0,0.3)', border: '1px solid var(--border-light)', 
-                    color: '#fff', borderRadius: '0.75rem', outline: 'none',
-                    boxShadow: 'inset 0 2px 4px rgba(0,0,0,0.3)'
-                  }}
-                  onFocus={(e) => e.target.style.borderColor = 'var(--primary)'}
-                  onBlur={(e) => e.target.style.borderColor = 'var(--border-light)'}
-                ></textarea>
-              </div>
 
-              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '2rem', marginTop: '1rem' }}>
-                <div className="input-group">
-                  <label>Contexto / Nicho</label>
-                  <select value={niche} onChange={(e) => setNiche(e.target.value)}>
-                    <option>Negócios & Finanças</option>
-                    <option>Saúde & Bem-estar</option>
-                    <option>Marketing Digital</option>
-                    <option>Humor & Entretenimento</option>
-                    <option>Desenvolvimento Pessoal</option>
-                  </select>
-                </div>
-                <div className="input-group">
-                  <label>Estratégia Neurológica</label>
-                  <select value={preset} onChange={(e) => setPreset(e.target.value)}>
-                    <option>Viral Agressivo (Alta Tensão)</option>
-                    <option>Autoridade Premium (Alta Credibilidade)</option>
-                    <option>Storytelling Emocional (Alta Conexão)</option>
-                  </select>
-                </div>
-              </div>
-
-              <div style={{ marginTop: '3rem', textAlign: 'center' }}>
-                <button className="btn" onClick={handleProcess} style={{ padding: '1.25rem 4rem', fontSize: '1.2rem' }}>
-                  Analisar Conteúdo <TrendingUp size={24} />
-                </button>
-              </div>
-            </motion.div>
-          )}
-
-          {step === 'processing' && (
-            <motion.div 
-              key="processing"
-              initial={{ opacity: 0, scale: 0.9 }}
-              animate={{ opacity: 1, scale: 1 }}
-              exit={{ opacity: 0, scale: 1.1 }}
-              className="glass-panel"
-              style={{ maxWidth: '500px', margin: '8rem auto', textAlign: 'center', padding: '5rem 3rem' }}
-            >
-              <motion.div 
-                animate={{ rotate: 360 }}
-                transition={{ repeat: Infinity, duration: 3, ease: "linear" }}
-                style={{ display: 'inline-block', marginBottom: '2.5rem' }}
-              >
-                <Loader size={72} color="var(--primary)" />
-              </motion.div>
-              <h3 style={{ fontSize: '1.5rem', marginBottom: '1rem' }}>Processamento Neural Ativo</h3>
-              <p style={{ color: 'var(--text-muted)', lineHeight: '1.6' }}>
-                O sistema está lendo o texto, identificando gatilhos emocionais, quebras de padrão e calculando o potencial de retenção em background...
-              </p>
-            </motion.div>
-          )}
-
-          {step === 'results' && activeCut && (
-            <motion.div 
-              key="results"
-              initial={{ opacity: 0, y: 30 }}
-              animate={{ opacity: 1, y: 0 }}
-              className="dashboard-grid"
-            >
-              {/* Esquerda: Lista de Cortes */}
-              <div className="glass-panel" style={{ display: 'flex', flexDirection: 'column', gap: '1.5rem', height: '100%' }}>
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                  <div>
-                    <h3 style={{ fontSize: '1.4rem' }}>Extratos Ranqueados</h3>
-                    <p style={{ fontSize: '0.85rem', color: 'var(--text-muted)' }}>{cuts.length} cortes com potencial encontrados</p>
+                <div className="glass-panel upload-card">
+                  {/* Drop Zone */}
+                  <div
+                    className={`drop-zone ${isDragging ? 'dragging' : ''}`}
+                    onDragOver={e => { e.preventDefault(); setIsDragging(true); }}
+                    onDragLeave={() => setIsDragging(false)}
+                    onDrop={handleDrop}
+                  >
+                    <Upload size={28} color="var(--primary)" />
+                    <span>Arraste um arquivo <strong>.txt .srt .vtt .md</strong> ou</span>
+                    <label className="file-btn">
+                      Escolher arquivo
+                      <input type="file" accept=".txt,.srt,.vtt,.md,.json" onChange={handleFileInput} hidden />
+                    </label>
                   </div>
-                  <button className="btn btn-secondary" onClick={exportJSON}>
-                    <Download size={18} /> Exportar
+
+                  <div className="divider"><span>ou cole o texto</span></div>
+
+                  <textarea
+                    className="transcript-input"
+                    rows={9}
+                    placeholder="Cole aqui o transcript bruto do vídeo, podcast, aula ou reunião..."
+                    value={transcript}
+                    onChange={e => setTranscript(e.target.value)}
+                  />
+
+                  {transcript && (
+                    <div className="transcript-meta">
+                      {transcript.split(' ').filter(Boolean).length} palavras · ~{Math.round(transcript.split(' ').filter(Boolean).length / 2.5)} segundos de fala
+                    </div>
+                  )}
+
+                  {/* Opções */}
+                  <div className="options-grid">
+                    <div className="input-group">
+                      <label>Nicho / Contexto</label>
+                      <select value={niche} onChange={e => setNiche(e.target.value)}>
+                        {NICHES.map(n => <option key={n}>{n}</option>)}
+                      </select>
+                    </div>
+                    <div className="input-group">
+                      <label>Estratégia Neurológica</label>
+                      <select value={preset} onChange={e => setPreset(e.target.value)}>
+                        {PRESETS.map(p => <option key={p}>{p}</option>)}
+                      </select>
+                    </div>
+                  </div>
+
+                  <button className="btn btn-cta" onClick={handleProcess}>
+                    Analisar com {provider === 'openai' ? 'OpenAI' : 'OpenRouter'}
+                    <TrendingUp size={20} />
                   </button>
                 </div>
-                
-                <div style={{ overflowY: 'auto', paddingRight: '0.5rem', display: 'flex', flexDirection: 'column', gap: '1rem' }}>
-                  {cuts.map(cut => (
-                    <div 
-                      key={cut.id} 
+              </div>
+            </motion.div>
+          )}
+
+          {/* ── PROCESSING STEP ── */}
+          {step === 'processing' && (
+            <motion.div key="processing" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="processing-screen">
+              <div className="glass-panel processing-card">
+                <motion.div className="loader-ring" animate={{ rotate: 360 }} transition={{ repeat: Infinity, duration: 2, ease: 'linear' }}>
+                  <Loader size={56} color="var(--primary)" />
+                </motion.div>
+                <h2>Pipeline Neural Ativo</h2>
+                <div className="processing-steps">
+                  {PROCESSING_STEPS.map((s, i) => (
+                    <div key={i} className={`proc-step ${i < processingStep ? 'done' : i === processingStep ? 'active' : 'pending'}`}>
+                      <div className="proc-dot" />
+                      <span>{s}</span>
+                    </div>
+                  ))}
+                </div>
+                <p className="proc-note">Usando {provider === 'openai' ? 'OpenAI GPT-4o' : 'Claude 3.5 Sonnet'} via {provider === 'openrouter' ? 'OpenRouter' : 'API direta'}...</p>
+              </div>
+            </motion.div>
+          )}
+
+          {/* ── RESULTS STEP ── */}
+          {step === 'results' && activeCut && (
+            <motion.div key="results" initial={{ opacity: 0, y: 24 }} animate={{ opacity: 1, y: 0 }} className="results-layout">
+
+              {/* Coluna Esquerda — Lista de Cortes */}
+              <div className="glass-panel cuts-panel">
+                <div className="cuts-panel-header">
+                  <div>
+                    <h2>Extratos Ranqueados</h2>
+                    <p className="sub-text">{cuts.length} cortes · ordenados por potencial viral</p>
+                  </div>
+                  <button className="btn btn-secondary" onClick={exportJSON}>
+                    <Download size={16} /> Exportar JSON
+                  </button>
+                </div>
+
+                <div className="cuts-list">
+                  {[...cuts].sort((a, b) => getScore(b) - getScore(a)).map(cut => (
+                    <div
+                      key={cut.id}
                       className={`cut-card ${activeCut.id === cut.id ? 'active' : ''}`}
                       onClick={() => { setActiveCut(cut); setIsPlaying(false); setActiveWordIndex(-1); }}
                     >
-                      <div className="cut-header">
+                      <div className="cut-card-top">
                         <span className="cut-title">{cut.title}</span>
-                        <span className="score-badge"><Flame size={16} /> {cut.totalScore || cut.score}</span>
+                        <span className="score-chip" style={{ background: `${scoreColor(getScore(cut))}22`, color: scoreColor(getScore(cut)), border: `1px solid ${scoreColor(getScore(cut))}44` }}>
+                          <Flame size={13} /> {getScore(cut)}
+                        </span>
                       </div>
-                      <p className="cut-text">{cut.text}</p>
-                      <div className="tags">
+                      <p className="cut-preview">{cut.text}</p>
+                      <div className="cut-tags">
                         <span className="tag">{cut.category}</span>
-                        <span className="tag">{cut.text.split(' ').length} palavras</span>
+                        <span className="tag tag-dim">{cut.text.split(' ').length} palavras</span>
                       </div>
                     </div>
                   ))}
                 </div>
               </div>
 
-              {/* Direita: Editor e Detalhes */}
-              <div className="glass-panel" style={{ display: 'flex', flexDirection: 'column', gap: '2rem' }}>
-                
-                {/* Mockup do Celular */}
-                <div className="phone-mockup" style={{ cursor: isPlaying ? 'default' : 'pointer' }} onClick={!isPlaying ? handlePlaySimulation : undefined}>
-                  <div className="phone-notch"></div>
-                  
-                  {!isPlaying && (
-                    <motion.div whileHover={{ scale: 1.1 }} style={{ zIndex: 2 }}>
-                      <div style={{ background: 'var(--primary)', padding: '1rem', borderRadius: '50%', boxShadow: '0 0 30px var(--primary-glow)' }}>
-                        <Play size={40} color="#fff" fill="#fff" />
+              {/* Coluna Direita — Editor + Preview */}
+              <div className="detail-column">
+
+                {/* Phone mockup */}
+                <div className="glass-panel phone-panel">
+                  <div className="phone-wrap">
+                    <div
+                      className="phone-body"
+                      onClick={!isPlaying ? () => { setIsPlaying(true); setActiveWordIndex(0); } : undefined}
+                      style={{ cursor: isPlaying ? 'default' : 'pointer' }}
+                    >
+                      <div className="phone-notch" />
+                      <div className="phone-screen">
+                        {!isPlaying && (
+                          <motion.div className="play-overlay" whileHover={{ scale: 1.1 }}>
+                            <div className="play-btn-circle">
+                              <Play size={36} fill="#fff" color="#fff" />
+                            </div>
+                            <span className="play-hint">Simular legenda</span>
+                          </motion.div>
+                        )}
+                        <div className="subtitle-area">
+                          {isPlaying
+                            ? activeCut.text.split(' ').map((word, i) => (
+                              <motion.span
+                                key={i}
+                                className="subtitle-word"
+                                animate={{
+                                  opacity: i <= activeWordIndex ? 1 : 0.25,
+                                  color: i === activeWordIndex ? 'var(--accent-green)' : '#fff',
+                                  scale: i === activeWordIndex ? 1.12 : 1,
+                                }}
+                                transition={{ duration: 0.1 }}
+                              >
+                                {word.toUpperCase()}
+                              </motion.span>
+                            ))
+                            : (
+                              <div className="subtitle-static">
+                                <span className="subtitle-highlight">{activeCut.text.split(' ').slice(0, 4).join(' ').toUpperCase()}</span>
+                                {' '}{activeCut.text.split(' ').slice(4, 8).join(' ').toUpperCase()}...
+                              </div>
+                            )
+                          }
+                        </div>
                       </div>
-                    </motion.div>
-                  )}
-                  
-                  <div style={{ 
-                    position: 'absolute', bottom: '15%', width: '85%', textAlign: 'center', 
-                    fontSize: '1.75rem', fontWeight: '900', textShadow: '0 4px 12px rgba(0,0,0,1)',
-                    fontFamily: 'Outfit, sans-serif', lineHeight: '1.15', zIndex: 1
-                  }}>
-                    {isPlaying ? (
-                      activeCut.text.split(' ').map((word, i) => (
-                        <motion.span 
-                          key={i}
-                          initial={{ opacity: 0.2, y: 10, scale: 0.9 }}
-                          animate={{ 
-                            opacity: i <= activeWordIndex ? 1 : 0.2,
-                            color: i === activeWordIndex ? 'var(--accent-green)' : '#fff',
-                            scale: i === activeWordIndex ? 1.15 : 1,
-                            y: i === activeWordIndex ? -5 : 0
-                          }}
-                          style={{ display: 'inline-block', marginRight: '0.4rem', transition: 'all 0.1s ease' }}
-                        >
-                          {word.toUpperCase()}
-                        </motion.span>
-                      ))
-                    ) : (
-                      <div style={{ background: 'rgba(0,0,0,0.5)', padding: '1rem', borderRadius: '1rem', backdropFilter: 'blur(5px)' }}>
-                        <span className="highlight-word">{activeCut.text.split(' ').slice(0, 3).join(' ').toUpperCase()}</span> {activeCut.text.split(' ').slice(3, 7).join(' ').toUpperCase()}...
-                        <div style={{ fontSize: '0.9rem', opacity: 0.7, fontWeight: 'normal', marginTop: '1rem', letterSpacing: '1px' }}>CLIQUE PARA VER A LEGENDA DINÂMICA</div>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Scores */}
+                <div className="glass-panel scores-panel">
+                  <h3 className="panel-title">Score de Viralização</h3>
+                  <div className="score-circle-wrap">
+                    <div className="score-circle" style={{ '--pct': getScore(activeCut) } as any}>
+                      <span className="score-number">{getScore(activeCut)}</span>
+                      <span className="score-label">/ 100</span>
+                    </div>
+                  </div>
+                  <div className="score-bars">
+                    {[
+                      { label: 'Abertura (Hook)', val: activeCut.hookScore, color: 'var(--secondary)' },
+                      { label: 'Retenção', val: activeCut.retentionScore, color: 'var(--accent-green)' },
+                      { label: 'Intensidade Emocional', val: activeCut.emotionScore, color: 'var(--accent-orange)' },
+                    ].map(({ label, val, color }) => (
+                      <div key={label} className="score-bar-item">
+                        <div className="score-bar-label">
+                          <span>{label}</span><span>{val}</span>
+                        </div>
+                        <div className="score-bar-track">
+                          <motion.div className="score-bar-fill" initial={{ width: 0 }} animate={{ width: `${val}%` }} transition={{ duration: 0.8, ease: 'easeOut' }} style={{ background: color }} />
+                        </div>
                       </div>
-                    )}
+                    ))}
                   </div>
                 </div>
 
-                {/* Sub Scores Visuals */}
-                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1.5rem' }}>
-                  <div className="score-item">
-                    <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.85rem', fontWeight: 600 }}>
-                      <span style={{ color: 'var(--secondary)' }}>Abertura (Hook)</span>
-                      <span>{activeCut.hookScore}/100</span>
-                    </div>
-                    <div className="score-bar-bg">
-                      <div className="score-bar-fill" style={{ width: `${activeCut.hookScore}%` }}></div>
-                    </div>
+                {/* Justificativa */}
+                <div className="glass-panel justification-panel">
+                  <h3 className="panel-title">Análise Cognitiva da IA</h3>
+                  <p className="justification-text">{activeCut.justification}</p>
+                </div>
+
+                {/* Editor do Texto */}
+                <div className="glass-panel editor-panel">
+                  <div className="editor-header">
+                    <h3 className="panel-title">Texto do Corte</h3>
+                    <button className="icon-btn" title="Copiar" onClick={() => copyText(activeCut.text)}>
+                      {copied ? <CheckCircle size={16} color="var(--accent-green)" /> : <Copy size={16} />}
+                    </button>
                   </div>
-                  <div className="score-item">
-                    <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.85rem', fontWeight: 600 }}>
-                      <span style={{ color: 'var(--accent-green)' }}>Retenção Final</span>
-                      <span>{activeCut.retentionScore}/100</span>
-                    </div>
-                    <div className="score-bar-bg">
-                      <div className="score-bar-fill" style={{ width: `${activeCut.retentionScore}%`, background: 'linear-gradient(90deg, #00f5d4, #06d6a0)' }}></div>
-                    </div>
+                  <textarea
+                    className="editor-textarea"
+                    rows={4}
+                    value={activeCut.text}
+                    onChange={e => setActiveCut({ ...activeCut, text: e.target.value })}
+                  />
+                  <div className="editor-actions">
+                    <button className="btn btn-danger">Descartar</button>
+                    <button className="btn btn-success">
+                      <CheckCircle size={16} /> Aprovar Corte
+                    </button>
                   </div>
                 </div>
 
-                <div className="justification-box">
-                  <strong style={{ color: 'var(--primary)', display: 'block', marginBottom: '0.5rem' }}>Análise Cognitiva da IA:</strong>
-                  {activeCut.justification}
-                </div>
-
-                <div className="input-group">
-                  <label>Texto Bruto do Corte (Editável)</label>
-                  <textarea rows={3} value={activeCut.text} onChange={(e) => setActiveCut({...activeCut, text: e.target.value})}></textarea>
-                </div>
-
-                <div style={{ display: 'flex', gap: '1rem', marginTop: 'auto', paddingTop: '1rem' }}>
-                  <button className="btn btn-secondary" style={{ flex: 1, justifyContent: 'center' }}>Descartar</button>
-                  <button className="btn btn-success" style={{ flex: 2, justifyContent: 'center', color: '#000' }}>
-                    <CheckCircle size={20} /> Aprovar para Edição
-                  </button>
-                </div>
               </div>
             </motion.div>
           )}
@@ -429,5 +473,3 @@ function App() {
     </div>
   );
 }
-
-export default App;
